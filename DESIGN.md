@@ -478,7 +478,27 @@ Every halt is loud: log at ERROR, write to the archive, and push an alert.
 - Property test for the anti-look-ahead invariant: a strategy's output for bars `0..t` must
   be identical whether or not bars `t+1..n` exist in the source.
 - Golden-file pipeline test: fixed bar sequence in → exact expected orders out. This is the
-  regression net for every future refactor.
+  regression net for every future refactor. **Built** — `tests/test_golden_pipeline.py`
+  against `tests/golden/pipeline_trace.txt`, driven by the `Trace` recorder in
+  `src/backtest/trace.py`.
+
+  Every other test here asserts a *property*. Properties are the right tool for rules you
+  can state, and useless against a refactor that quietly changes **which trades happen**
+  while keeping every stated property true — which is exactly the shape of the resampler
+  divergence (§5.4) and the wall-clock phase check (§5.3). Both were found by accident.
+
+  Three things make it worth having rather than ceremonial:
+
+  - **The input is hand-built, not seeded random.** A reviewer can read the trace against
+    the scenario and say whether it is *right*, not merely whether it changed.
+  - **Regeneration is opt-in** (`LIGERBOT_UPDATE_GOLDEN=1`) and never happens in CI. A
+    golden file that regenerates on failure asserts only that the code agrees with itself.
+  - **The file is checked for teeth.** Six mutations that *should* move the trace are
+    asserted to move it, so it cannot silently degrade into a rubber stamp.
+
+  The scenario deliberately covers the paths that hurt: a stop-loss (the only exit that
+  loses money), a forced square-off (the only one the strategy does not choose), a risk
+  refusal, a re-entry after being stopped, and a holiday gap between the two sessions.
 - Chaos tests: kill each module mid-flight and assert no order is lost **and** none is
   duplicated.
 - Reconciliation test: backtest vs. paper over the same sessions must agree within tolerance.

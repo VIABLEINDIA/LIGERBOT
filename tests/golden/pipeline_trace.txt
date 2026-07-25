@@ -1,0 +1,43 @@
+# LIGERBOT pipeline trace
+# strategy    sma_crossover v1 [long_period=20 short_period=5 stop_pct=0.01] (0eb3c6be38)
+# window      2026-03-02 to 2026-03-04
+# instruments nse_cm:2885 nse_cm:1333 nse_cm:1594
+# equity      500000.00 (fixed)
+# risk        per-trade 0.500%, open cap 1.500%, max positions 2
+# costs       brokerage=min(Rs 20, 0.0300%)/order stt_sell=0.02500% exch=0.00297% sebi=0.000100% stamp_buy=0.00300% gst=18%
+# slippage    slippage=2.50bps/leg (min 1.00bps, x2.0 within 15min of the open/close)
+#
+# SIGNAL/SUBMIT are stamped at the CLOSE of the bar the strategy saw;
+# FILL is stamped at the OPEN of the FOLLOWING bar. Equal times on adjacent
+# lines are therefore correct next-bar execution, not a same-bar fill.
+
+2026-03-02 09:15  SESSION -            start 2026-03-02  sizing_equity=500000.00
+2026-03-02 10:17  SIGNAL  nse_cm:2885  OPEN_LONG    ref=1300.54 stop=1287.53
+2026-03-02 10:17  SUBMIT  nse_cm:2885  BUY     192  risk=2497.92
+2026-03-02 10:17  FILL    nse_cm:2885  BUY     192 @ 1300.87  signal     costs=40.14 slip=0.33
+2026-03-02 10:27  SIGNAL  nse_cm:1333  OPEN_LONG    ref=1650.50 stop=1633.99
+2026-03-02 10:27  SUBMIT  nse_cm:1333  BUY     151  risk=2493.01
+2026-03-02 10:27  FILL    nse_cm:1333  BUY     151 @ 1650.91  signal     costs=40.11 slip=0.41
+2026-03-02 10:37  SIGNAL  nse_cm:1594  OPEN_LONG    ref=1480.38 stop=1465.58
+2026-03-02 10:37  REJECT  nse_cm:1594  max open positions (2) reached
+2026-03-02 11:36  FILL    nse_cm:2885  SELL    192 @ 1287.21  stop_loss  costs=94.34 slip=0.32
+2026-03-02 11:56  SIGNAL  nse_cm:2885  OPEN_LONG    ref=1272.73 stop=1260.00
+2026-03-02 11:56  SUBMIT  nse_cm:2885  BUY     196  risk=2495.08
+2026-03-02 11:56  FILL    nse_cm:2885  BUY     196 @ 1273.05  signal     costs=40.12 slip=0.32
+2026-03-02 15:10  FILL    nse_cm:1333  SELL    151 @ 1693.22  square_off costs=96.78 slip=0.42
+2026-03-02 15:10  FILL    nse_cm:2885  SELL    196 @ 1279.91  square_off costs=95.40 slip=0.32
+2026-03-02 15:30  SESSION -            end   2026-03-02  equity=504703.76  trades=3
+2026-03-04 09:15  SESSION -            start 2026-03-04  sizing_equity=500000.00
+2026-03-04 10:47  SIGNAL  nse_cm:2885  OPEN_LONG    ref=1288.42 stop=1275.54
+2026-03-04 10:47  SUBMIT  nse_cm:2885  BUY     194  risk=2498.72
+2026-03-04 10:47  FILL    nse_cm:2885  BUY     194 @ 1288.74  signal     costs=40.16 slip=0.32
+2026-03-04 10:57  SIGNAL  nse_cm:1594  OPEN_LONG    ref=1519.28 stop=1504.09
+2026-03-04 10:57  SUBMIT  nse_cm:1594  BUY     164  risk=2491.16
+2026-03-04 10:57  FILL    nse_cm:1594  BUY     164 @ 1519.66  signal     costs=40.11 slip=0.38
+2026-03-04 11:17  SIGNAL  nse_cm:1333  OPEN_LONG    ref=1692.34 stop=1675.42
+2026-03-04 11:17  REJECT  nse_cm:1333  max open positions (2) reached
+2026-03-04 12:41  SIGNAL  nse_cm:1594  CLOSE_LONG   ref=1543.67 stop=-
+2026-03-04 12:41  SUBMIT  nse_cm:1594  SELL    164  risk=0.00
+2026-03-04 12:41  FILL    nse_cm:1594  SELL    164 @ 1543.28  signal     costs=96.04 slip=0.39
+2026-03-04 15:10  FILL    nse_cm:2885  SELL    194 @ 1329.79  square_off costs=97.44 slip=0.33
+2026-03-04 15:30  SESSION -            end   2026-03-04  equity=516267.19  trades=5

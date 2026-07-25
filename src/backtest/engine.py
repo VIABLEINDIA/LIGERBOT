@@ -34,6 +34,7 @@ from src.backtest.costs import CostModel, SlippageModel
 from src.backtest.metrics import Metrics
 from src.backtest.portfolio import Portfolio
 from src.backtest.sim_broker import Fill, FillReason, SimBroker
+from src.backtest.trace import Trace
 from src.bars import Bar
 from src.risk_engine import Intent, RiskEngine, RiskLimits, Side, Signal
 from src.strategy_base import Strategy, StrategyContext
@@ -100,9 +101,12 @@ class BacktestEngine:
         self,
         strategy: Strategy,
         config: Optional[BacktestConfig] = None,
+        trace: Optional[Trace] = None,
     ) -> None:
         self.strategy = strategy
         self.config = config or BacktestConfig()
+        # Opt-in decision log (§3.10). None by default so the ordinary path pays nothing.
+        self.trace = trace
         self.risk = RiskEngine(self.config.risk_limits)
         self.broker = SimBroker(
             self.config.cost_model, self.config.slippage,
@@ -135,9 +139,15 @@ class BacktestEngine:
         self.portfolio.start_day(day)
         self.risk.start_session(day, equity)
         self.strategy.on_session_start(day)
+        if self.trace is not None:
+            self.trace.session_start(cal.at(day, cal.SESSION_OPEN), day, equity)
 
     def _close_session(self, day: dt.date) -> None:
         self.portfolio.end_day(day, halted=self.risk.halted)
+        if self.trace is not None:
+            self.trace.session_end(
+                cal.at(day, cal.SESSION_CLOSE), day, self.portfolio.equity,
+                trades=len(self.portfolio.trades), halted=self.risk.halted)
 
     # -- main loop ---------------------------------------------------------
     def run(
@@ -147,6 +157,21 @@ class BacktestEngine:
         start: dt.date,
         end: dt.date,
     ) -> BacktestResult:
+        if self.trace is not None:
+            limits = self.config.risk_limits
+            self.trace.describe(
+                strategy=self.strategy.describe(),
+                window=f"{start} to {end}",
+                instruments=" ".join(instrument_ids),
+                equity=f"{self.config.starting_equity:.2f}"
+                       f" ({'compounding' if self.config.compound else 'fixed'})",
+                risk=f"per-trade {limits.risk_per_trade:.3%}, "
+                     f"open cap {limits.max_open_risk:.3%}, "
+                     f"max positions {limits.max_open_positions}",
+                costs=self.config.cost_model.describe(),
+                slippage=self.config.slippage.describe(),
+            )
+
         quality = None
         if not self.config.skip_quality_gate:
             quality = source.assess(instrument_ids, start, end,
@@ -209,9 +234,15 @@ class BacktestEngine:
         decision = self.risk.evaluate(
             signal, allows_entry=phase.allows_entry, allows_exit=phase.allows_exit
         )
+        if self.trace is not None:
+            self.trace.signal(signal)
         if not decision.approved:
             self._count_rejection(decision.reason)
+            if self.trace is not None:
+                self.trace.reject(signal.bar_time, signal.instrument_id, decision.reason)
             return
+        if self.trace is not None:
+            self.trace.submit(signal.bar_time, decision.order)
         self.broker.submit(decision.order, signal.bar_time)
 
     def _count_rejection(self, reason: str) -> None:
@@ -227,6 +258,8 @@ class BacktestEngine:
 
     def _record_and_apply(self, fill: Fill, bar: Bar) -> None:
         """Apply a fill to risk and portfolio state."""
+        if self.trace is not None:
+            self.trace.fill(fill)
         if fill.intent.is_open:
             self._apply_open(fill)
         else:
