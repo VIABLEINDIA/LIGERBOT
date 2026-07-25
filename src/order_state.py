@@ -250,6 +250,126 @@ class ManagedOrder:
         )
 
 
+# Kotak order-status field names. Unlike the `limits()` mapping in `src/account.py`, these
+# are corroborated by two independent working integrations on this machine
+# (D:\APEXBOT\kotak_neo_broker.py and D:\Aishwarya\apex-trading-bot\src\execution.py), which
+# agree on all of them. That is better evidence than a single source, though still not a
+# live confirmation — both projects flag their Kotak field names as unverified.
+#
+#   nOrdNo   broker order number        ordSt    order status
+#   fldQty   filled quantity            avgPrc   average fill price
+#   unFldSz  unfilled / pending size
+ORDER_ID_FIELD = "nOrdNo"
+ORDER_STATUS_FIELDS = ("ordSt", "status")
+FILLED_QTY_FIELDS = ("fldQty", "filled_quantity")
+AVG_PRICE_FIELDS = ("avgPrc", "average_price")
+PENDING_QTY_FIELDS = ("unFldSz", "pending_quantity")
+REJECTION_FIELDS = ("rejRsn", "errMsg", "rejectionReason")
+
+# Kotak's status strings mapped onto our state machine. Matched case-insensitively on a
+# substring, because the exact casing and wording vary between endpoints.
+_STATUS_MAP = (
+    ("complete", OrderStatus.FILLED),
+    ("filled", OrderStatus.FILLED),
+    ("reject", OrderStatus.REJECTED),
+    ("cancel", OrderStatus.CANCELLED),
+    ("partial", OrderStatus.PARTIAL),
+    ("open", OrderStatus.ACKED),
+    ("pending", OrderStatus.ACKED),
+    ("trigger", OrderStatus.ACKED),
+)
+
+
+def _pick(payload: Dict[str, Any], keys: tuple, default: Any = None) -> Any:
+    for key in keys:
+        if payload.get(key) not in (None, ""):
+            return payload[key]
+    return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value in (None, ""):
+            return default
+        return float(str(value).replace(",", ""))
+    except (TypeError, ValueError):
+        return default
+
+
+@dataclass(frozen=True)
+class BrokerOrderStatus:
+    """One order's state as the broker reports it."""
+
+    broker_order_id: str
+    raw_status: str
+    filled_quantity: int
+    pending_quantity: int
+    average_price: float
+    rejection_reason: str = ""
+
+    @property
+    def mapped_status(self) -> Optional[OrderStatus]:
+        """Our state-machine equivalent, or None if unrecognised.
+
+        Returning None rather than guessing matters: an unmapped status means the broker
+        told us something we do not understand, and treating it as FILLED or REJECTED
+        would be worse than surfacing it.
+        """
+        lowered = self.raw_status.lower()
+        for needle, status in _STATUS_MAP:
+            if needle in lowered:
+                return status
+        return None
+
+
+def parse_order_status(payload: Dict[str, Any]) -> Optional[BrokerOrderStatus]:
+    """Normalise one row from ``order_report()`` or ``order_history()``."""
+    if not isinstance(payload, dict):
+        return None
+    order_id = payload.get(ORDER_ID_FIELD) or payload.get("order_id")
+    if not order_id:
+        return None
+    filled = int(_as_float(_pick(payload, FILLED_QTY_FIELDS, 0)))
+    return BrokerOrderStatus(
+        broker_order_id=str(order_id),
+        raw_status=str(_pick(payload, ORDER_STATUS_FIELDS, "") or ""),
+        filled_quantity=filled,
+        pending_quantity=int(_as_float(_pick(payload, PENDING_QTY_FIELDS, 0))),
+        average_price=_as_float(_pick(payload, AVG_PRICE_FIELDS, 0.0)),
+        rejection_reason=str(_pick(payload, REJECTION_FIELDS, "") or ""),
+    )
+
+
+def parse_order_report(response: Any) -> Dict[str, BrokerOrderStatus]:
+    """Turn an ``order_report()`` response into ``{broker_order_id: status}``.
+
+    Rows that cannot be parsed are skipped **and counted**, never treated as absent — an
+    order we fail to read is an order we would otherwise believe had vanished.
+    """
+    rows: List[dict] = []
+    if isinstance(response, dict):
+        for key in ("data", "Data", "orders", "result"):
+            value = response.get(key)
+            if isinstance(value, list):
+                rows = [r for r in value if isinstance(r, dict)]
+                break
+    elif isinstance(response, list):
+        rows = [r for r in response if isinstance(r, dict)]
+
+    out: Dict[str, BrokerOrderStatus] = {}
+    skipped = 0
+    for row in rows:
+        parsed = parse_order_status(row)
+        if parsed is None:
+            skipped += 1
+            continue
+        out[parsed.broker_order_id] = parsed
+    if skipped:
+        log.error("Could not parse %d row(s) from order_report(). Verify the field "
+                  "mapping — an unparsed order reads as missing.", skipped)
+    return out
+
+
 class OrderRegistry:
     """Tracks live orders and enforces idempotency across restarts.
 

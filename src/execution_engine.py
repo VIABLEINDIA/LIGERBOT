@@ -23,6 +23,7 @@ Safety, in the order it applies:
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
 import logging
 import time
@@ -32,7 +33,10 @@ import config
 from src import event_bus
 from src.instruments import InstrumentMaster
 from src.kill_switch import KillSwitch
-from src.order_state import Fill, ManagedOrder, OrderRegistry, OrderStatus
+from src.order_state import (
+    Fill, IllegalTransition, ManagedOrder, OrderRegistry, OrderStatus,
+    parse_order_report,
+)
 from src.risk_engine import Intent, Side
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [execution] %(message)s")
@@ -204,13 +208,84 @@ class ExecutionEngine:
         self._send(order)
 
     def poll_open_orders(self) -> None:
-        """Expire orders the broker never acknowledged, and reconcile live ones.
+        """Reconcile live orders against the broker, then expire the unacknowledged.
 
-        An order stuck in SENT is the ambiguous case — it may or may not have reached
-        the exchange. Expiring it surfaces that rather than leaving it live forever.
+        Fixes the second half of **B3**. Previously this only expired stale ``SENT``
+        orders, so a partial fill or a post-acknowledgement rejection was never detected
+        — the bot would believe an order was still working long after the exchange had
+        finished with it.
+
+        Ordering matters: reconcile first, expire second. An order the broker has already
+        filled must not be expired just because our own ack timeout elapsed.
         """
+        if self.registry.live_orders() and not config.DRY_RUN:
+            self._reconcile_live_orders()
         for order in self.registry.expire_stale():
             self._publish(order)
+
+    def _reconcile_live_orders(self) -> None:
+        """Apply the broker's view of every working order."""
+        try:
+            report = parse_order_report(self._ensure_broker().order_report())
+        except Exception as exc:  # noqa: BLE001 - broker SDKs raise widely
+            log.error("order_report() failed (%s) — cannot verify working orders.", exc)
+            return
+
+        for order in self.registry.live_orders():
+            if not order.broker_order_id:
+                continue                      # not acked yet; the timeout handles it
+            status = report.get(order.broker_order_id)
+            if status is None:
+                # Acked but absent from the report: a real disagreement, not a
+                # transient. Surfaced rather than assumed either way.
+                log.error("Order %s (broker %s) is not in order_report(). Our view and "
+                          "the broker's disagree — investigate before trading further.",
+                          order.client_order_id, order.broker_order_id)
+                continue
+            self._apply_broker_status(order, status)
+
+    def _apply_broker_status(self, order: ManagedOrder, status) -> None:
+        """Move one order to match the broker, emitting fills for new quantity."""
+        newly_filled = status.filled_quantity - order.filled_quantity
+        if newly_filled > 0:
+            # Each increment is its own fill event, so a position built from three
+            # partials produces three fills rather than one aggregate.
+            order.add_fill(Fill(
+                quantity=newly_filled,
+                price=status.average_price or order.limit_price or 0.0,
+                at=dt.datetime.now(),
+                exchange_fill_id=status.broker_order_id,
+            ))
+            log.info("Order %s filled %d more (%d/%d @ %.2f)",
+                     order.client_order_id, newly_filled, order.filled_quantity,
+                     order.quantity, status.average_price)
+            self._publish(order)
+            return
+
+        mapped = status.mapped_status
+        if mapped is None:
+            log.warning("Order %s has an unrecognised broker status %r — leaving it "
+                        "untouched rather than guessing.",
+                        order.client_order_id, status.raw_status)
+            return
+        if mapped is order.status or mapped is OrderStatus.PARTIAL:
+            return
+
+        try:
+            if mapped is OrderStatus.REJECTED:
+                order.mark_rejected(status.rejection_reason or status.raw_status)
+            elif mapped is OrderStatus.CANCELLED:
+                order.mark_cancelled(status.raw_status)
+            elif mapped is OrderStatus.ACKED and order.status is OrderStatus.SENT:
+                order.mark_acked(status.broker_order_id)
+            else:
+                return
+        except IllegalTransition as exc:
+            # Our state machine and the broker disagree about what is possible. Logged
+            # loudly rather than forced, because forcing it would hide the disagreement.
+            log.error("Cannot apply broker status to %s: %s", order.client_order_id, exc)
+            return
+        self._publish(order)
 
     def _check_live_clearance(self) -> bool:
         """Refuse to arm live trading unless every prerequisite is met.

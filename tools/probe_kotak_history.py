@@ -125,6 +125,92 @@ def dump_limits(client: Any) -> Dict[str, Any]:
     return {"raw": payload}
 
 
+def dump_shapes(client: Any) -> Dict[str, Any]:
+    """Dump the response shape of every endpoint whose fields we still guess at.
+
+    One credentialed run should settle every remaining unknown, not just history depth.
+    Two of these are the last places in the codebase where field names are unverified:
+
+    ``limits()``
+        The equity mapping in ``src/account.py``. Checked across four projects on this
+        machine and **none** of them had identified these fields — one returns the raw
+        dict unexamined, another flags them as unverified in its README. A wrong mapping
+        mis-sizes every trade by the same factor, silently.
+    ``scrip_master()`` / ``search_scrip()``
+        The instrument master (defect B4). No project here has a working implementation —
+        the nearest is a ``NotImplementedError`` with a TODO.
+
+    ``order_report()`` field names *are* corroborated by two independent integrations, so
+    this confirms rather than discovers.
+    """
+    print(f"\n{RULE}\n4. Response shapes for the fields we still guess at\n{RULE}")
+    out: Dict[str, Any] = {}
+
+    probes = [
+        ("positions", lambda: client.positions(), "src/position_manager.py mapping"),
+        ("order_report", lambda: client.order_report(),
+         "src/order_state.py mapping (corroborated, confirming)"),
+        ("holdings", lambda: client.holdings(), "informational"),
+    ]
+    for name, call, why in probes:
+        print(f"\n--- {name}()  [{why}] ---")
+        try:
+            response = call()
+        except Exception as exc:
+            print(f"    failed: {str(exc)[:200]}")
+            out[name] = {"error": str(exc)[:300]}
+            continue
+        out[name] = response
+        _describe_shape(response)
+
+    # scrip_master returns file URLs per segment in some versions and rows in others.
+    print(f"\n--- scrip_master(exchange_segment='nse_cm')  [instrument master, B4] ---")
+    try:
+        response = client.scrip_master(exchange_segment="nse_cm")
+        out["scrip_master"] = response
+        _describe_shape(response)
+        print("    ^ if this is a URL, the instrument master downloads and parses it;")
+        print("      if rows, parse them directly. Either way B4 becomes buildable.")
+    except Exception as exc:
+        print(f"    failed: {str(exc)[:200]}")
+        out["scrip_master"] = {"error": str(exc)[:300]}
+
+    print(f"\n--- search_scrip(exchange_segment='nse_cm', symbol='RELIANCE') ---")
+    try:
+        response = client.search_scrip(exchange_segment="nse_cm", symbol="RELIANCE")
+        out["search_scrip"] = response
+        _describe_shape(response)
+    except Exception as exc:
+        print(f"    failed: {str(exc)[:200]}")
+        out["search_scrip"] = {"error": str(exc)[:300]}
+
+    return out
+
+
+def _describe_shape(response: Any, indent: str = "    ") -> None:
+    """Print enough structure to pin field names, without dumping account data.
+
+    Values are shown only for the first row, and truncated — the goal is the *keys*.
+    """
+    if isinstance(response, dict):
+        print(f"{indent}dict with keys: {sorted(response)[:20]}")
+        for wrapper in ("data", "Data", "result"):
+            inner = response.get(wrapper)
+            if isinstance(inner, dict):
+                print(f"{indent}  ['{wrapper}'] dict keys: {sorted(inner)[:25]}")
+            elif isinstance(inner, list) and inner:
+                print(f"{indent}  ['{wrapper}'] list[{len(inner)}]")
+                if isinstance(inner[0], dict):
+                    print(f"{indent}    row keys: {sorted(inner[0])[:25]}")
+    elif isinstance(response, list):
+        print(f"{indent}list[{len(response)}]")
+        if response and isinstance(response[0], dict):
+            print(f"{indent}  row keys: {sorted(response[0])[:25]}")
+    else:
+        text = str(response)
+        print(f"{indent}{type(response).__name__}: {text[:200]}")
+
+
 def probe_depth(
     client: Any, method_name: str, token: str, segment: str, max_days: int
 ) -> Dict[str, Any]:
@@ -245,6 +331,8 @@ def main() -> None:
     findings: Dict[str, Any] = {"probed_at": dt.datetime.now().isoformat()}
     findings["sdk"] = introspect(client)
     findings["limits"] = dump_limits(client)
+
+    findings["shapes"] = dump_shapes(client)
 
     candidates = findings["sdk"]["history_candidates"]
     if candidates:

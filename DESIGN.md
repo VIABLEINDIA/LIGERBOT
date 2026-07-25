@@ -942,7 +942,54 @@ None of these block Phase 0.
    floor below which it refuses to trade, because cost drag exceeds any plausible edge.
    §5.2 suggests somewhere near ₹2L. Set it precisely once the real brokerage plan is known.
 
-### 5.4 Post-build review findings
+### 5.4 Cross-referencing other Kotak integrations on this machine
+
+Four other projects on this machine talk to Kotak Neo (`D:\APEXBOT`,
+`D:\Aishwarya\apex-trading-bot`, `D:\JEANS`, `D:\BALU`). Reading them was worth it — one
+comment pointed at a defect that would have stopped the bot dead — but it also showed the
+limits of borrowed knowledge.
+
+**`src/auth.py` was broken in three ways.** Verified by introspecting the *installed*
+`neo_api_client` v2.0.0 rather than trusting any project's code:
+
+| Previous call | Reality |
+|---|---|
+| `NeoAPI(consumer_secret=...)` | No such parameter. Signature is `(environment, access_token, neo_fin_key, consumer_key)`; `consumer_secret` survives only in a docstring and commented-out code. Raises `TypeError`. |
+| `client.login(mobilenumber=...)` | No such method. It is `totp_login(mobile_number=..., ucc=, totp=)` — underscored. |
+| `client.session_2fa(OTP=...)` | No such method. It is `totp_validate(mpin=...)`. |
+
+The bot could not have authenticated at all. The probe would have failed with a `TypeError`
+rather than anything informative. Three independent sources now agree on the corrected flow.
+This is the same lesson as the NSE holiday list: **a plausible-looking API call written from
+recall is not an API call.**
+
+**Order-status field names gained, and corroborated.** `nOrdNo`, `ordSt`, `fldQty`,
+`avgPrc`, `unFldSz` via `order_report()` — used identically by two independent
+integrations. That made the second half of B3 buildable: `poll_open_orders` now reconciles
+working orders against the broker instead of only expiring unacknowledged ones, so partial
+fills and post-acknowledgement rejections are detected. Unrecognised statuses map to `None`
+rather than being guessed at.
+
+**Two things nobody had.** Worth recording precisely because it bounds what borrowing can
+achieve:
+
+- **`limits()` field names.** All four projects were checked. One returns the raw dict
+  unexamined; another flags its Kotak field names as unverified in its own README. So
+  `src/account.py`'s equity mapping remains a guess *everywhere*, and only a live call
+  settles it. This is the mapping that mis-sizes every trade by the same factor if wrong.
+- **Scrip-master download.** The nearest implementation is a `NotImplementedError` with a
+  TODO. Nobody here has built it, so B4 stays fail-safe-without-a-success-path.
+
+**Licences ruled out the richest source.** `D:\APEXBOT\external\` vendors `nautilus_trader`
+(LGPL) and `openalgo` (AGPL) — the latter has verified adapters for many Indian brokers.
+Copying from either into this now-public repo would force its licence onto the whole
+project, so neither was read for code.
+
+**The probe now dumps every remaining unknown.** `limits()`, `positions()`,
+`order_report()`, `scrip_master()` and `search_scrip()` response shapes, so a single
+credentialed run settles the two open mappings instead of requiring a second round trip.
+
+### 5.5 Post-build review findings
 
 A deliberately adversarial pass over the finished system, motivated by the track record:
 a real defect had surfaced in *every* phase, and always through testing rather than

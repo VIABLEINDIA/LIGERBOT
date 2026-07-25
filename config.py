@@ -82,9 +82,16 @@ MAX_VOLUME_PARTICIPATION: float = _float("MAX_VOLUME_PARTICIPATION", 0.10)
 # --------------------------------------------------------------------------
 # Kotak Neo
 # --------------------------------------------------------------------------
+# "prod" or "uat". The SDK itself defaults to uat — a genuine sandbox, useful for
+# exercising the full login and order path without real money.
 KOTAK_ENVIRONMENT: str = os.getenv("KOTAK_ENVIRONMENT", "prod")
 KOTAK_CONSUMER_KEY: str = os.getenv("KOTAK_CONSUMER_KEY", "")
+# Retained but NOT passed to the SDK: neo_api_client v2.0.0 has no consumer_secret
+# parameter (verified by introspection — it survives only in a docstring and commented-out
+# code). Kept in case a future version reinstates it. See src/auth.py.
 KOTAK_CONSUMER_SECRET: str = os.getenv("KOTAK_CONSUMER_SECRET", "")
+# Optional tracking key the SDK accepts as neo_fin_key.
+KOTAK_NEO_FIN_KEY: str = os.getenv("KOTAK_NEO_FIN_KEY", "")
 KOTAK_MOBILE: str = os.getenv("KOTAK_MOBILE", "")
 KOTAK_UCC: str = os.getenv("KOTAK_UCC", "")
 KOTAK_MPIN: str = os.getenv("KOTAK_MPIN", "")
