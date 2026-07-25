@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional  # noqa: F401  (List used by flush())
 
 import config
 from src import event_bus
@@ -50,6 +50,9 @@ class BarResampler:
         self.interval = interval_seconds
         self._buckets: Dict[str, List[Bar]] = {}
         self._bucket_start: Dict[str, dt.datetime] = {}
+
+    def _bucket_start_of(self, instrument: str) -> Optional[dt.datetime]:
+        return self._bucket_start.get(instrument)
 
     def _bucket_for(self, bar: Bar) -> Optional[dt.datetime]:
         window = cal.session_window(bar.bar_start.date())
@@ -83,6 +86,37 @@ class BarResampler:
             self._buckets[instrument] = []
         self._buckets[instrument].append(bar)
         return completed
+
+    def held_session_day(self) -> Optional[dt.date]:
+        """Session the currently-held buckets belong to, if any.
+
+        Lets the caller detect a session rollover *before* feeding the new day's bar,
+        which matters because a bucket must be closed out inside its own session.
+        """
+        for start in self._bucket_start.values():
+            if start is not None:
+                return start.date()
+        return None
+
+    def flush(self) -> List[Bar]:
+        """Close out every held bucket and return the resulting bars.
+
+        Needed because :meth:`add` only completes a bucket when the *next* one opens —
+        so the final bucket of a session has nothing to close it. Without this the
+        strategy never sees the last bar of the day live while the backtester does, and
+        the stale bucket would instead surface at the next session's open.
+        """
+        out: List[Bar] = []
+        for instrument, start in list(self._bucket_start.items()):
+            if start is None:
+                continue
+            merged = self._merge(instrument, start)
+            if merged is not None:
+                out.append(merged)
+            self._bucket_start[instrument] = None
+            self._buckets[instrument] = []
+        out.sort(key=lambda b: (b.bar_start, b.instrument_id))
+        return out
 
     def _merge(self, instrument: str, start: dt.datetime) -> Optional[Bar]:
         parts = self._buckets.get(instrument) or []
@@ -149,8 +183,18 @@ class StrategyEngine:
     # -- bars --------------------------------------------------------------
     def _handle_bar(self, fields: Dict[str, Any]) -> None:
         bar = Bar.from_event(fields)
-
         day = bar.bar_start.date()
+
+        # Close out the previous session's final bucket BEFORE rolling the session.
+        # `add()` only completes a bucket when the next one opens, so without this the
+        # last bucket of the day would surface after `on_session_start` had already
+        # reset the session-anchored indicators — anchoring the new day's VWAP on
+        # yesterday's close, and handing the strategy a bar stamped a session earlier.
+        held = self.resampler.held_session_day()
+        if held is not None and held != day:
+            for leftover in self.resampler.flush():
+                self._dispatch(leftover, leftover.bar_start.date())
+
         if day != self.session_day:
             self.session_day = day
             self.strategy.on_session_start(day)
@@ -159,7 +203,10 @@ class StrategyEngine:
         coarse = self.resampler.add(bar)
         if coarse is None:
             return
+        self._dispatch(coarse, day)
 
+    def _dispatch(self, coarse: Bar, day: dt.date) -> None:
+        """Show one closed coarse bar to the strategy and publish any signals."""
         phase = cal.phase(coarse.bar_end)
         context = StrategyContext(
             now=coarse.bar_end,

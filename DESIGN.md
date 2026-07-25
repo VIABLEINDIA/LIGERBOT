@@ -931,7 +931,43 @@ None of these block Phase 0.
    floor below which it refuses to trade, because cost drag exceeds any plausible edge.
    §5.2 suggests somewhere near ₹2L. Set it precisely once the real brokerage plan is known.
 
-### 5.4 Resolved after Phase 5
+### 5.4 Post-build review findings
+
+A deliberately adversarial pass over the finished system, motivated by the track record:
+a real defect had surfaced in *every* phase, and always through testing rather than
+reading. That pattern is evidence more exist, not reassurance.
+
+**A live/backtest divergence at the session boundary — the most consequential find.**
+Resampling 1-minute bars to the strategy interval happens in two places: `resample_frame`
+(batch, used by the backtester) and `BarResampler` (streaming, used live). The streaming
+version only completes a bucket when the *next* one opens, so:
+
+1. The final bucket of each session was never emitted live — 74 five-minute bars instead
+   of 75 — while the backtester emitted all 75. A divergence at precisely the point
+   square-off logic runs.
+2. Worse, that stale bucket then surfaced on the **next** session's first bar, *after*
+   `on_session_start` had already reset the session-anchored indicators. Day two's VWAP
+   was therefore anchored on day one's close, and the strategy received a bar stamped a
+   whole session earlier — with `StrategyContext.now` wrong by a full trading day.
+
+Neither was visible in unit tests of the resampler alone, because in isolation its
+behaviour is *correct*: a streaming resampler cannot know a session ended. The bug belonged
+to the engine's ordering. `BarResampler` now exposes `flush()` and `held_session_day()`, and
+`StrategyEngine._handle_bar` closes out the previous session's bucket **before** rolling.
+
+**Two resamplers is a standing risk, now bounded by a test.** Their shapes differ enough
+(whole-frame versus one-bar-at-a-time) that sharing an implementation is awkward, so both
+remain — but `TestLiveMatchesBacktestResampling` asserts they agree across intervals, gaps,
+synthetic bars, partial final buckets and a full 375-bar session. Without that, the claim
+that backtest and live share behaviour would rest on nothing.
+
+**26 numeric boundary probes found nothing.** Cost-model monotonicity and the flat-fee cap;
+long-versus-short round trips diverging correctly once entry ≠ exit; sizing never exceeding
+the per-trade budget across stop distances from 0.2% to 10%; profits correctly creating
+headroom in the worst-case gate; the position book's reversal-through-zero case realising
+P&L only on the closed portion and re-pricing the remainder. All held.
+
+### 5.5 Resolved after Phase 5
 
 **The NSE holiday calendar was wrong, and it mattered.** The list shipped in Phase 0 was
 written from recall and marked provisional. Cross-checked against two independent published
