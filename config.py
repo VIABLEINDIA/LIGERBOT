@@ -196,7 +196,12 @@ LIVE_SCALING_STATE_PATH: str = os.getenv(
 LIVE_MAX_LOSING_SESSIONS: int = _int("LIVE_MAX_LOSING_SESSIONS", 3)
 # Absolute rupee loss cap for the day, independent of the percentage limit. A percentage
 # of a mis-read equity figure is still wrong; an absolute cap bounds the damage either way.
-LIVE_MAX_DAILY_LOSS: float = _float("LIVE_MAX_DAILY_LOSS", 5_000.0)
+#
+# Deliberately UNSET (0 = disabled). There is no sensible default: the right figure is a
+# statement about how much money this operator is willing to lose in a day, which no
+# library can guess. The live guard refuses to clear live trading until it is set, so the
+# effect of leaving it blank is a refusal rather than an inherited stranger's number.
+LIVE_MAX_DAILY_LOSS: float = _float("LIVE_MAX_DAILY_LOSS", 0.0)
 # Hard cap on orders per session — bounds the blast radius of a signal-generation bug.
 LIVE_MAX_ORDERS_PER_DAY: int = _int("LIVE_MAX_ORDERS_PER_DAY", 20)
 BAR_PERSIST_INTERVAL_SECONDS: int = _int("BAR_PERSIST_INTERVAL_SECONDS", 30)
@@ -230,11 +235,13 @@ WINDOW_SIZE: int = _int("WINDOW_SIZE", max(SMA_LONG, 50))
 # --------------------------------------------------------------------------
 # Equity is no longer configured: it is read from the broker each session and pinned
 # (D1). TOTAL_EQUITY survives only as a simulation/backtest fallback for code paths that
-# have no broker to ask.
-TOTAL_EQUITY: float = _float("TOTAL_EQUITY", 500_000.0)
+# have no broker to ask — a round illustrative figure, not an account size.
+TOTAL_EQUITY: float = _float("TOTAL_EQUITY", 1_000_000.0)
 
-# Floor below which trading is refused. At roughly Rs 2L, round-trip costs reach ~15% of
-# the amount risked per trade (DESIGN.md 5.2) and no plausible intraday edge survives.
+# Floor below which trading is refused. Derived rather than chosen: it is the level at
+# which round-trip costs reach ~15% of the amount risked per trade (DESIGN.md 5.2), which
+# follows from the broker's fee structure, not from any particular account. Recompute it
+# if your brokerage plan differs.
 MIN_EQUITY: float = _float("MIN_EQUITY", 200_000.0)
 EQUITY_STATE_PATH: str = os.getenv("EQUITY_STATE_PATH", "state/session_equity.json")
 

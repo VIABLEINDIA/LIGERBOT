@@ -724,9 +724,20 @@ itself is wrong. An unverified broker field mapping mis-sizes every trade by the
 factor, and each percentage cap scales *with* that error rather than catching it.
 
 Worked example from the demo: equity mis-read 10× high turns the "2% daily limit" into 20%
-of the real account. `LIVE_MAX_DAILY_LOSS` (₹5,000) and `LIVE_MAX_ORDERS_PER_DAY` bound the
-damage in rupees regardless. They apply in live mode only — in backtest and paper they
-would cap activity for reasons unrelated to the strategy and distort the results.
+of the real account. `LIVE_MAX_DAILY_LOSS` and `LIVE_MAX_ORDERS_PER_DAY` bound the damage in
+rupees regardless. They apply in live mode only — in backtest and paper they would cap
+activity for reasons unrelated to the strategy and distort the results.
+
+**`LIVE_MAX_DAILY_LOSS` ships unset, and the live guard blocks until it is chosen.** There
+is no sensible default: the figure states how much a particular operator is willing to lose
+in a day, which no library can guess. Shipping a number would be worse than shipping none —
+it would be a limit nobody decided on, inherited silently by anyone who cloned the repo.
+
+Every other monetary figure in this document is **derived rather than chosen**, and so says
+nothing about any account: the ~₹47 fixed cost per round trip and the ₹2L viability floor
+both fall out of the broker's fee structure (§5.2); the ₹200cr liquidity threshold and
+~₹5,000 share-price ceiling are universal screen criteria (D6). `TOTAL_EQUITY` is a round
+illustrative value used only where no broker exists to ask — backtests, demos and tests.
 
 ---
 

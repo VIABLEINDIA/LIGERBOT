@@ -243,7 +243,18 @@ def evaluate(
             "(DESIGN.md 5.2) and no plausible intraday edge survives.",
         ))
 
-    # 4. Deliberate human intent.
+    # 4. The absolute backstop must be a decision, not an inherited default.
+    add(GuardCheck(
+        "Absolute daily loss cap set",
+        config.LIVE_MAX_DAILY_LOSS > 0,
+        (f"Rs {config.LIVE_MAX_DAILY_LOSS:,.0f}" if config.LIVE_MAX_DAILY_LOSS > 0
+         else "unset"),
+        "Set LIVE_MAX_DAILY_LOSS. It ships unset on purpose — the right figure is a "
+        "statement about how much you are willing to lose in a day, and every "
+        "percentage limit becomes wrong together if the equity figure is misread.",
+    ))
+
+    # 5. Deliberate human intent.
     auth = read_authorisation()
     if auth is None:
         add(GuardCheck(

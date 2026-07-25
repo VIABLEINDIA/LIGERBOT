@@ -24,6 +24,9 @@ DAY = dt.date(2026, 7, 23)
 def auth_path(tmp_path, monkeypatch):
     path = tmp_path / "live_authorisation.json"
     monkeypatch.setattr(config, "LIVE_AUTH_PATH", str(path))
+    # The absolute loss cap ships unset on purpose; set it so tests can isolate the
+    # gate they are actually about.
+    monkeypatch.setattr(config, "LIVE_MAX_DAILY_LOSS", 5_000.0)
     return path
 
 
@@ -98,6 +101,44 @@ class TestIndividualBlockers:
         report = evaluate(**cleared_kwargs(equity=50_000.0))
         assert not report.cleared
         assert any("viability floor" in n for n in blocker_names(report))
+
+
+class TestAbsoluteCapMustBeChosen:
+    """The absolute loss cap ships unset, and live is refused until it is chosen.
+
+    There is no sensible default: the figure states how much this operator is willing to
+    lose in a day. Shipping someone else's number would be both a disclosure and, worse,
+    a limit nobody decided on.
+    """
+
+    def test_unset_cap_blocks_live(self, auth_path, monkeypatch):
+        write_authorisation(400_000.0, "tester", day=DAY)
+        monkeypatch.setattr(config, "LIVE_MAX_DAILY_LOSS", 0.0)
+        report = evaluate(**cleared_kwargs())
+        assert not report.cleared
+        blocker = next(c for c in report.blockers if "daily loss cap" in c.name)
+        assert blocker.detail == "unset"
+        assert "willing to lose" in blocker.remedy
+
+    def test_set_cap_clears_that_gate(self, auth_path, monkeypatch):
+        write_authorisation(400_000.0, "tester", day=DAY)
+        monkeypatch.setattr(config, "LIVE_MAX_DAILY_LOSS", 7_500.0)
+        report = evaluate(**cleared_kwargs())
+        assert report.cleared, blocker_names(report)
+
+    def test_template_ships_it_blank(self):
+        """A fresh clone must not inherit a risk tolerance nobody chose.
+
+        Asserted against ``.env.example`` rather than the loaded config, because the
+        loaded value legitimately reflects whatever the local ``.env`` says — it is the
+        shipped template that governs what a new operator starts from.
+        """
+        from pathlib import Path
+
+        template = Path(__file__).resolve().parent.parent / ".env.example"
+        line = next(l for l in template.read_text(encoding="utf-8").splitlines()
+                    if l.startswith("LIVE_MAX_DAILY_LOSS="))
+        assert line.split("=", 1)[1].strip() == "", f"template ships a value: {line}"
 
 
 class TestAuthorisation:
