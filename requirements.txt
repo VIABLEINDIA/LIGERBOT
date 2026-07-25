@@ -1,0 +1,23 @@
+# --- Event bus ---
+redis>=5.0.0
+
+# --- Kotak Neo SDK (v2.0) ---
+# Installed directly from GitHub. Uncomment / run manually if pip can't reach git:
+#   pip install "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client"
+neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client
+
+# --- Time-series storage ---
+influxdb-client>=1.40.0
+
+# --- Bar store (the self-recorded historical dataset, DESIGN.md D5) ---
+pandas>=2.0.0
+pyarrow>=14.0.0           # Parquet engine
+
+# --- Auth / utilities ---
+pyotp>=2.9.0              # automated TOTP generation for Kotak Neo login
+python-dotenv>=1.0.0      # load .env configuration
+tzdata>=2024.1            # IANA timezone database (Asia/Kolkata) — required on Windows
+
+# --- Development / test ---
+pytest>=8.0.0
+fakeredis>=2.20.0         # in-process Redis for the simulation demos

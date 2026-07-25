@@ -1,0 +1,38 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Logs & data
+*.log
+data/
+*.sqlite
+
+# Recorded bars and runtime state. bar_data/ is the self-recorded historical dataset
+# (DESIGN.md D5) — it grows without bound and belongs in backup, not in git.
+bar_data/
+state/
+*.parquet.corrupt
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Isolated venv for the Kotak SDK (it hard-pins old shared packages)
+.venv-kotak/
+
+# Machine-local Claude Code settings (contains local filesystem paths)
+.claude/settings.local.json

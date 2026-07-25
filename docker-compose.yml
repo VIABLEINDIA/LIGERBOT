@@ -1,0 +1,34 @@
+# Infrastructure for LIGERBOT: the Redis event bus + InfluxDB time-series store.
+#   docker compose up -d
+services:
+  redis:
+    image: redis:latest
+    container_name: ligerbot-redis-event-bus
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+
+  influxdb:
+    image: influxdb:2.7
+    container_name: ligerbot-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    # Optional: auto-provision on first boot instead of using the web setup wizard.
+    # Fill these in and uncomment to skip the http://localhost:8086 setup screen.
+    # environment:
+    #   DOCKER_INFLUXDB_INIT_MODE: setup
+    #   DOCKER_INFLUXDB_INIT_USERNAME: admin
+    #   DOCKER_INFLUXDB_INIT_PASSWORD: changeme-please
+    #   DOCKER_INFLUXDB_INIT_ORG: ligerbot
+    #   DOCKER_INFLUXDB_INIT_BUCKET: trading_logs
+    #   DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: super-secret-dev-token
+
+volumes:
+  redis_data:
+  influxdb_data:
