@@ -1058,7 +1058,53 @@ archiver eventually costs both. Concretely:
 - A failed write is **not** requeued. Retrying a failing backend indefinitely is how the
   queue fills in the first place.
 
-### 5.7 Cross-referencing other Kotak integrations on this machine
+### 5.7 The universe screen could not produce a universe
+
+A functional hole, not a cosmetic one. D6 specified "a screen, not a list", and both the
+screening logic and the criteria were built — but **nothing fetched the two inputs the
+screen filters on.** The scrip master carries no price and no traded volume, so
+`apply_screen` correctly excluded every candidate and returned an empty universe. Even with
+the probe run and the master downloaded, there would have been nothing to subscribe to and
+nothing to backfill.
+
+`src/universe_builder.py` supplies the missing inputs. `last_price` is straightforward —
+`quotes()` returns it. **Average daily value is the hard one**, because it needs history,
+which is exactly what the probe is still measuring. Three sources are tried in descending
+order of trust:
+
+| Source | Trust | Notes |
+|---|---|---|
+| `HISTORY` | full | real daily bars — pending the probe |
+| `RECORDED_BARS` | full | our own Parquet store, needs no broker call, improves daily (D5 mitigation 2) |
+| `QUOTE_PROXY` | **weak** | today's traded value so far — one day, and understated early in a session |
+
+**Which source was used is recorded on the universe.** A screen run on a one-day proxy is a
+weaker claim than one run on sixty days of recorded bars, and reporting them identically
+would let a provisional universe pass as a validated one.
+
+The screen **fails closed**: an instrument whose liquidity cannot be established is
+excluded, never assumed adequate. Trading an illiquid name because its data was missing is
+a worse outcome than trading a shorter list.
+
+### 5.8 The three unraised alerts
+
+§3.9 listed six alert conditions. Halt, dead-letter, reconciliation mismatch and archive
+overflow were wired; three were not. Each shares a shape: **the bot looks healthy while
+quietly not working**, which is the most expensive way for a failure to present.
+
+- **Feed stale** — entries are blocked and exits still permitted, but nothing said so.
+  Deduplicated per instrument, because `evaluate()` runs every loop iteration and would
+  otherwise alert every second for as long as the feed stayed down. A whole-feed outage
+  reads differently from one bad symbol.
+- **Order rejected** — one rejection is a bad price or a margin shortfall; a *run* of them
+  is systemic (wrong trading symbol, expired session, unusable product code) and the
+  strategy will keep generating signals into it. The dedup key is the *reason*, so distinct
+  causes surface separately while a repeating one does not flood.
+- **Consumer backlog** — nothing monitored consumer-group lag at all. A module falling
+  behind still runs, still logs, still passes any liveness check; the backlog is the only
+  visible symptom, and on `approved_orders` it means trades going unplaced.
+
+### 5.9 Cross-referencing other Kotak integrations on this machine
 
 Four other projects on this machine talk to Kotak Neo (`D:\APEXBOT`,
 `D:\Aishwarya\apex-trading-bot`, `D:\JEANS`, `D:\BALU`). Reading them was worth it — one
@@ -1105,7 +1151,7 @@ project, so neither was read for code.
 `order_report()`, `scrip_master()` and `search_scrip()` response shapes, so a single
 credentialed run settles the two open mappings instead of requiring a second round trip.
 
-### 5.8 Post-build review findings
+### 5.10 Post-build review findings
 
 A deliberately adversarial pass over the finished system, motivated by the track record:
 a real defect had surfaced in *every* phase, and always through testing rather than
@@ -1141,7 +1187,7 @@ the per-trade budget across stop distances from 0.2% to 10%; profits correctly c
 headroom in the worst-case gate; the position book's reversal-through-zero case realising
 P&L only on the closed portion and re-pricing the remainder. All held.
 
-### 5.9 Resolved after Phase 5
+### 5.11 Resolved after Phase 5
 
 **The NSE holiday calendar was wrong, and it mattered.** The list shipped in Phase 0 was
 written from recall and marked provisional. Cross-checked against two independent published

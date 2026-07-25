@@ -231,6 +231,38 @@ class StreamConsumer:
         """Mark a message fully handled. Only call this after the work is durable."""
         self.client.xack(self.stream, self.group, entry_id)
 
+    def check_backlog(self, *, threshold: Optional[int] = None, alerter=None) -> int:
+        """Alert if unacked work is piling up. Returns the pending count.
+
+        A consumer falling behind is invisible otherwise: the module still runs, still
+        logs, still passes any liveness check — it is simply not keeping up, and the
+        stream will eventually trim past its own unacked entries. On ``approved_orders``
+        that means orders going unplaced while everything looks healthy.
+        """
+        pending = self.pending_count()
+        limit = threshold if threshold is not None else config.BACKLOG_ALERT_THRESHOLD
+        if limit <= 0 or pending < limit:
+            return pending
+
+        message = (f"{self.group} has {pending:,} unacked message(s) on {self.stream} "
+                   f"(threshold {limit:,}). The consumer is not keeping up; the stream "
+                   f"will trim past them if this continues.")
+        log.error(message)
+        if alerter is None:
+            try:
+                from src.alerting import get_alerter
+
+                alerter = get_alerter(self.client)
+            except Exception:  # noqa: BLE001
+                return pending
+        try:
+            alerter.warning("Consumer falling behind", message, source=self.group,
+                            dedup_key=f"backlog:{self.stream}:{self.group}",
+                            context={"stream": self.stream, "pending": pending})
+        except Exception as exc:  # noqa: BLE001
+            log.error("Could not raise the backlog alert: %s", exc)
+        return pending
+
     def pending_count(self) -> int:
         try:
             summary = self.client.xpending(self.stream, self.group)

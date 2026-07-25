@@ -76,6 +76,7 @@ class ExecutionEngine:
         self.kill_switch = KillSwitch(self.client)
         self.instruments = instrument_master
         self.neo = None  # authenticated lazily, only for a real order
+        self._rejections = 0
         self.consumer = event_bus.StreamConsumer(
             self.client, config.STREAM_APPROVED_ORDERS,
             f"{config.CONSUMER_GROUP_PREFIX}.execution", "exec-1",
@@ -173,7 +174,32 @@ class ExecutionEngine:
         else:
             order.mark_rejected(str(payload.get("errMsg", "unknown rejection")))
             log.error("Exchange rejected %s: %s", order.client_order_id, order.error)
+            self._alert_rejection(order)
         self._publish(order)
+
+    def _alert_rejection(self, order: ManagedOrder) -> None:
+        """Raise a rejection where a human sees it.
+
+        One rejection is usually a bad price or a margin shortfall. A *run* of them means
+        something systemic — a wrong trading symbol, an expired session, a product code
+        the account cannot use — and the strategy will keep generating signals into it.
+        The dedup key is the reason rather than the order, so distinct causes surface
+        separately while a repeating one does not flood.
+        """
+        self._rejections += 1
+        try:
+            from src.alerting import get_alerter
+
+            get_alerter(self.client).warning(
+                "Order rejected",
+                f"{order.instrument_id}: {order.error}",
+                source="execution_engine",
+                dedup_key=f"reject:{order.error[:40]}",
+                context={"client_order_id": order.client_order_id,
+                         "rejections_this_session": self._rejections},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("Could not raise the rejection alert: %s", exc)
 
     def _publish(self, order: ManagedOrder, *, dry_run: bool = False) -> None:
         """Emit the order's current state.
@@ -393,6 +419,9 @@ class ExecutionEngine:
 
             self.poll_open_orders()
             self.registry.purge_terminal()
+            # Approved orders piling up unacked means trades are going unplaced while
+            # every module still looks healthy.
+            self.consumer.check_backlog()
 
 
 def main() -> None:

@@ -77,12 +77,16 @@ class FeedMonitor:
         stale_after_seconds: Optional[float] = None,
         *,
         on_state_change: Optional[Callable[[str, FeedState, FeedState], None]] = None,
+        alerter=None,
     ) -> None:
         self.stale_after = stale_after_seconds or config.FEED_STALE_SECONDS
         self.instruments: Dict[str, InstrumentHealth] = {}
         self.states: Dict[str, FeedState] = {}
         self.connected: bool = True
         self.on_state_change = on_state_change
+        # A stale feed silently blocks entries. Without an alert the bot looks healthy
+        # while quietly declining to trade — the most expensive kind of quiet.
+        self.alerter = alerter
 
     # -- ingestion ---------------------------------------------------------
     def record_tick(self, instrument_id: str, price: float, *, now: Optional[float] = None) -> None:
@@ -153,10 +157,37 @@ class FeedMonitor:
         if state is FeedState.STALE:
             log.error("FEED STALE %s — no tick for over %.0fs. Blocking new entries on "
                       "it; exits remain permitted.", instrument_id, self.stale_after)
+            self._alert(instrument_id, state, previous)
+        elif state is FeedState.DISCONNECTED:
+            self._alert(instrument_id, state, previous)
         elif state is FeedState.LIVE and previous in (FeedState.STALE, FeedState.DISCONNECTED):
             log.warning("Feed recovered for %s.", instrument_id)
         if self.on_state_change:
             self.on_state_change(instrument_id, previous, state)
+
+    def _alert(self, instrument_id: str, state: FeedState, previous: FeedState) -> None:
+        """Raise feed loss where a human sees it.
+
+        Deduplicated per instrument, because ``evaluate()`` runs on every loop iteration
+        and would otherwise emit an alert per second for as long as the feed stayed down.
+        """
+        if self.alerter is None:
+            return
+        try:
+            whole_feed = self.all_stale()
+            self.alerter.critical(
+                "Market feed down" if whole_feed else "Feed stale",
+                (f"Every tracked instrument has stopped ticking ({state.value}). "
+                 f"No new entries anywhere; exits remain permitted."
+                 if whole_feed else
+                 f"{instrument_id} has no tick within {self.stale_after:.0f}s "
+                 f"({state.value}). Entries on it are blocked; exits remain permitted."),
+                source="feed_health",
+                dedup_key=("feed:all" if whole_feed else f"feed:{instrument_id}"),
+                context={"previous_state": previous.value},
+            )
+        except Exception as exc:  # noqa: BLE001 - alerting must not break the watchdog
+            log.error("Could not raise the feed alert: %s", exc)
 
     # -- queries -----------------------------------------------------------
     def state_of(self, instrument_id: str) -> FeedState:

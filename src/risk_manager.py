@@ -281,6 +281,8 @@ class RiskManager:
             for entry_id, fields in self.signals.read(count=100, block_ms=1000):
                 self.signals.handle(entry_id, fields, self._handle_signal)
 
+            self.signals.check_backlog()
+
 
 def main() -> None:
     # The SDK sets no per-request timeout; bound it before any network call.

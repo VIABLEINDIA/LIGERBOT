@@ -219,6 +219,10 @@ ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "")
 # second would otherwise emit an alert every second, and a stream nobody can read is the
 # same as no alerts. The suppressed count is reported when it next fires.
 ALERT_COOLDOWN_SECONDS: float = _float("ALERT_COOLDOWN_SECONDS", 300.0)
+# Unacked messages before a consumer is judged to be falling behind. A module that is not
+# keeping up still runs, still logs and still passes a liveness check — the backlog is the
+# only visible symptom, and on approved_orders it means trades going unplaced.
+BACKLOG_ALERT_THRESHOLD: int = _int("BACKLOG_ALERT_THRESHOLD", 1_000)
 
 # --------------------------------------------------------------------------
 # Archiving (DESIGN.md 3.9, defect B12)
