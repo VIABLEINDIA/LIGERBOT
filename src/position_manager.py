@@ -423,12 +423,17 @@ def main() -> None:
     # The SDK sets no per-request timeout; bound it before any network call.
     kotak_api.bound_network_calls()
     neo = None
-    if not config.DRY_RUN:
+    if config.needs_broker_session():
+        # Reconciliation is the point of this module, and paper mode needs it as much as
+        # live does — a paper session whose book was never checked against the broker
+        # cannot be reconciled against a backtest afterwards.
         from src.auth import authenticate_neo
         neo = authenticate_neo()
     else:
-        log.warning("DRY_RUN — no broker connection, so reconciliation is disabled. "
-                    "The book will track fills but cannot be verified against reality.")
+        log.warning("Mode is %r — no broker connection, so reconciliation is DISABLED. "
+                    "The book tracks fills but cannot be verified against reality. Use "
+                    "TRADING_MODE=paper for anything you intend to reconcile.",
+                    config.TRADING_MODE)
     PositionManager(neo).run()
 
 

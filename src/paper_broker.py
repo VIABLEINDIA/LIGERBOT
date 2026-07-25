@@ -166,10 +166,16 @@ class PaperBroker:
 
 
 def main() -> None:
-    if config.TRADING_MODE != "paper":
-        log.warning("TRADING_MODE is %r, not 'paper'. Running the paper broker anyway, "
-                    "but the execution engine may also be filling these orders — that "
-                    "would double-count every trade.", config.TRADING_MODE)
+    if not config.simulates_fills():
+        # Refuse rather than warn. In dry_run and live the execution engine is the filler,
+        # and both consume approved_orders from separate consumer groups — so both would
+        # receive every order and both would fill it, double-counting every trade while
+        # looking entirely healthy.
+        log.error("TRADING_MODE=%r — the paper broker must not run. The execution engine "
+                  "fills orders in this mode; running both would fill every order twice. "
+                  "Set TRADING_MODE=paper, or start src.execution_engine instead.",
+                  config.TRADING_MODE)
+        return
     PaperBroker().run()
 
 

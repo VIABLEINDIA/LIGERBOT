@@ -285,11 +285,24 @@ class RiskManager:
 def main() -> None:
     # The SDK sets no per-request timeout; bound it before any network call.
     kotak_api.bound_network_calls()
+
     neo = None
-    if not config.DRY_RUN:
+    if config.needs_broker_session():
+        # Paper mode needs the broker too: equity must come from it (D1). Branching on
+        # DRY_RUN here used to skip this in paper mode, so sizing silently fell back to
+        # a configured figure and every recorded session was invalid.
         from src.auth import authenticate_neo
         neo = authenticate_neo()
-    RiskManager(neo).run()
+
+    master = None
+    try:
+        from src.instruments import load_or_download_master
+        master = load_or_download_master(neo)
+    except Exception as exc:  # noqa: BLE001 - the correlation filter degrades gracefully
+        log.warning("No instrument master (%s) — the correlation filter will treat every "
+                    "instrument as ungrouped.", exc)
+
+    RiskManager(neo, master).run()
 
 
 if __name__ == "__main__":

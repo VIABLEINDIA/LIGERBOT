@@ -14,10 +14,19 @@ order state machine (DESIGN.md 3.3); the original had three defects that mattere
   guessing.
 
 Safety, in the order it applies:
-  1. Kill switch — checked per order, effective without a restart.
-  2. ``DRY_RUN`` — logs instead of sending. Start here. Always.
-  3. Idempotency — a redelivered order is recognised and not sent twice.
-  4. Rate limiting — stays under the broker's orders/second cap.
+  1. Mode — this module runs in ``dry_run`` and ``live`` only. In ``paper`` it refuses to
+     start, because :mod:`src.paper_broker` fills there and running both would fill every
+     order twice.
+  2. Live guard — ``TRADING_MODE=live`` alone is not sufficient (DESIGN.md Phase 5).
+  3. Kill switch — checked per order, effective without a restart.
+  4. Idempotency — a redelivered order is recognised and not sent twice.
+  5. Rate limiting — stays under the broker's orders/second cap.
+
+.. warning::
+   ``dry_run`` fills instantly at the signal's reference price. That is a **wiring check,
+   not paper trading** — it ignores the next-bar delay, slippage and costs, overstating
+   results by roughly 0.22R per trade against a ~0.12R friction budget. Use
+   ``TRADING_MODE=paper`` for anything whose numbers you intend to believe.
 
     python -m src.execution_engine
 """
@@ -96,15 +105,19 @@ class ExecutionEngine:
     # -- sending -----------------------------------------------------------
     def _send(self, order: ManagedOrder) -> None:
         """Send one order and record the broker's response."""
-        if config.DRY_RUN:
+        if not config.sends_real_orders():
             order.mark_sent()
             order.mark_acked(f"DRYRUN-{int(time.time() * 1000)}")
-            log.info("   DRY_RUN — not sent. Would place: %s %d %s",
-                     order.side.value, order.quantity, order.instrument_id)
-            # In dry run we simulate the fill so the downstream pipeline is exercised
-            # end to end; it is explicitly flagged so nothing mistakes it for real.
+            log.info("   %s — not sent. Would place: %s %d %s",
+                     config.TRADING_MODE.upper(), order.side.value, order.quantity,
+                     order.instrument_id)
+            # Dry run fills instantly at the reference price so the downstream pipeline is
+            # exercised end to end. This is NOT a simulation of execution and must never
+            # be used as paper trading: it ignores the next-bar delay, slippage and costs,
+            # which together overstate results by ~0.22R per trade against a ~0.12R
+            # friction budget (DESIGN.md Phase 4). `src.paper_broker` exists for that.
             order.add_fill(Fill(order.quantity, order.limit_price or 0.0,
-                                __import__("datetime").datetime.now()))
+                                dt.datetime.now()))
             self._publish(order, dry_run=True)
             return
 
@@ -157,7 +170,8 @@ class ExecutionEngine:
         This is the distinction B3 collapsed.
         """
         payload = order.to_event()
-        payload["dry_run"] = dry_run or config.DRY_RUN
+        payload["dry_run"] = dry_run or not config.sends_real_orders()
+        payload["mode"] = config.TRADING_MODE
         event_bus.publish(self.client, config.STREAM_FILLED_ORDERS, payload)
 
     # -- consumption -------------------------------------------------------
@@ -219,7 +233,7 @@ class ExecutionEngine:
         Ordering matters: reconcile first, expire second. An order the broker has already
         filled must not be expired just because our own ack timeout elapsed.
         """
-        if self.registry.live_orders() and not config.DRY_RUN:
+        if self.registry.live_orders() and config.sends_real_orders():
             self._reconcile_live_orders()
         for order in self.registry.expire_stale():
             self._publish(order)
@@ -288,6 +302,21 @@ class ExecutionEngine:
             return
         self._publish(order)
 
+    def _check_mode(self) -> bool:
+        """Refuse to run in paper mode — ``src.paper_broker`` owns filling there.
+
+        Both consume ``approved_orders`` from separate consumer groups, so both would
+        receive every order and both would fill it. That double-counts every trade, and it
+        would do so while looking entirely healthy.
+        """
+        if config.simulates_fills():
+            log.error("TRADING_MODE=paper — the execution engine must NOT run. "
+                      "src.paper_broker fills orders in paper mode; running both would "
+                      "fill every order twice and double-count every trade. "
+                      "Start `python -m src.paper_broker` instead.")
+            return False
+        return True
+
     def _check_live_clearance(self) -> bool:
         """Refuse to arm live trading unless every prerequisite is met.
 
@@ -320,15 +349,16 @@ class ExecutionEngine:
         if not event_bus.ping(self.client):
             log.error("Redis not reachable — start it with `docker compose up -d`.")
             return
+        if not self._check_mode():
+            return
         if not self._check_live_clearance():
             return
 
         mode = {"live": "LIVE (real money!)",
-                "paper": "PAPER (simulated fills)",
-                "dry_run": "DRY_RUN (nothing fills)"}.get(
+                "dry_run": "DRY_RUN (instant fills at the signal price — NOT paper)"}.get(
                     config.TRADING_MODE, config.TRADING_MODE)
         log.info("Execution Engine armed — mode: %s", mode)
-        if self.instruments is None and not config.DRY_RUN:
+        if self.instruments is None and config.sends_real_orders():
             log.error("No instrument master loaded. Live orders cannot resolve trading "
                       "symbols and will be refused (B4).")
 

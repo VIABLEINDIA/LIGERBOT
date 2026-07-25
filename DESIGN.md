@@ -942,7 +942,43 @@ None of these block Phase 0.
    floor below which it refuses to trade, because cost drag exceeds any plausible edge.
    §5.2 suggests somewhere near ₹2L. Set it precisely once the real brokerage plan is known.
 
-### 5.4 Cross-referencing other Kotak integrations on this machine
+### 5.4 Paper mode was silently degraded
+
+`TRADING_MODE` was introduced in Phase 4 but never propagated: five call sites still
+branched on `DRY_RUN`, and the two settings were independent. With `TRADING_MODE=paper` and
+`DRY_RUN` at its default:
+
+- **`risk_manager`** skipped authentication, so session equity fell back to the configured
+  `TOTAL_EQUITY` instead of the broker's real figure — defeating D1 entirely.
+- **`position_manager`** skipped authentication, so **reconciliation was disabled**.
+
+Both silently. Phase 4's exit criterion is reconciling paper results against a backtest over
+the same sessions, so this would have invalidated every session as it was recorded — and the
+symptom would only have appeared weeks later, as an unexplained divergence.
+
+**The fix is structural, not a set of corrected call sites.** `TRADING_MODE` is now primary
+and `DRY_RUN` is *derived* from it, so they cannot disagree. An unrecognised mode raises at
+import rather than defaulting, because a typo there decides whether real orders are sent.
+
+Three predicates replace the boolean, and they are not interchangeable:
+
+| | `dry_run` | `paper` | `live` |
+|---|---|---|---|
+| `needs_broker_session()` | no | **yes** | yes |
+| `sends_real_orders()` | no | no | **yes** |
+| `simulates_fills()` | no | **yes** | no |
+
+The distinction that was missing: **paper mode needs a real broker session.** Equity and
+reconciliation are real; only order placement is simulated. That is the whole point of the
+phase — a paper run against a fabricated equity figure tests nothing.
+
+**Each filler now refuses the modes it does not own.** The execution engine and the paper
+broker both consume `approved_orders` from *separate consumer groups*, so both would receive
+every order and both would fill it — double-counting every trade while appearing healthy.
+`run_all.py` already started only one; now neither will start in the wrong mode even if
+launched by hand.
+
+### 5.5 Cross-referencing other Kotak integrations on this machine
 
 Four other projects on this machine talk to Kotak Neo (`D:\APEXBOT`,
 `D:\Aishwarya\apex-trading-bot`, `D:\JEANS`, `D:\BALU`). Reading them was worth it — one
@@ -989,7 +1025,7 @@ project, so neither was read for code.
 `order_report()`, `scrip_master()` and `search_scrip()` response shapes, so a single
 credentialed run settles the two open mappings instead of requiring a second round trip.
 
-### 5.5 Post-build review findings
+### 5.6 Post-build review findings
 
 A deliberately adversarial pass over the finished system, motivated by the track record:
 a real defect had surfaced in *every* phase, and always through testing rather than
@@ -1025,7 +1061,7 @@ the per-trade budget across stop distances from 0.2% to 10%; profits correctly c
 headroom in the worst-case gate; the position book's reversal-through-zero case realising
 P&L only on the closed portion and re-pricing the remainder. All held.
 
-### 5.5 Resolved after Phase 5
+### 5.7 Resolved after Phase 5
 
 **The NSE holiday calendar was wrong, and it mattered.** The list shipped in Phase 0 was
 written from recall and marked provisional. Cross-checked against two independent published

@@ -64,17 +64,61 @@ def _parse_instruments() -> List[Instrument]:
 # --------------------------------------------------------------------------
 # Safety
 # --------------------------------------------------------------------------
-DRY_RUN: bool = _bool("DRY_RUN", True)
-
-# Three modes, replacing the DRY_RUN boolean (DESIGN.md Phase 4):
+# --------------------------------------------------------------------------
+# Trading mode — the single source of truth (DESIGN.md Phase 4)
+# --------------------------------------------------------------------------
 #   "dry_run" — nothing fills; orders are logged and discarded. Smoke-testing only.
-#   "paper"   — realistic simulated fills via the backtester's own model. What Phase 4
-#               runs. Distinct from dry_run because dry_run filled instantly at the
-#               signal price, which flattered results and would have made the
-#               paper-vs-backtest reconciliation meaningless.
+#   "paper"   — realistic simulated fills via the backtester's own model, against a REAL
+#               broker session for equity and reconciliation. What Phase 4 runs.
 #   "live"    — real orders to the broker.
-# DRY_RUN=false is honoured as "live" so existing configuration keeps working.
-TRADING_MODE: str = os.getenv("TRADING_MODE", "dry_run" if DRY_RUN else "live").lower()
+#
+# TRADING_MODE is primary and DRY_RUN is derived from it below. They were previously
+# independent, which let them disagree: with TRADING_MODE=paper and DRY_RUN left at its
+# default, modules branching on DRY_RUN skipped the broker entirely — so paper mode ran on
+# a configured equity figure with reconciliation disabled, and said nothing about it. Since
+# Phase 4's whole purpose is reconciling paper against backtest, that silently invalidated
+# the very sessions it was accumulating.
+MODE_DRY_RUN = "dry_run"
+MODE_PAPER = "paper"
+MODE_LIVE = "live"
+VALID_TRADING_MODES = (MODE_DRY_RUN, MODE_PAPER, MODE_LIVE)
+
+_raw_mode = os.getenv("TRADING_MODE", "").strip().lower()
+if not _raw_mode:
+    # No explicit mode: honour a legacy DRY_RUN=false as "live" so existing
+    # configuration keeps working.
+    _raw_mode = MODE_DRY_RUN if _bool("DRY_RUN", True) else MODE_LIVE
+if _raw_mode not in VALID_TRADING_MODES:
+    raise ValueError(
+        f"TRADING_MODE={_raw_mode!r} is not one of {VALID_TRADING_MODES}. Failing at "
+        f"import rather than falling through to a default — a typo here would otherwise "
+        f"decide whether real orders are sent."
+    )
+TRADING_MODE: str = _raw_mode
+
+# Derived, never configured independently. Kept because it reads naturally at call sites
+# that only care whether anything reaches the broker.
+DRY_RUN: bool = TRADING_MODE == MODE_DRY_RUN
+
+
+def needs_broker_session() -> bool:
+    """True when a real broker session is required.
+
+    Paper mode needs one: equity must come from the broker (D1) and the position manager
+    must reconcile against it. Only *order placement* is simulated in paper — everything
+    else is real, which is the entire point of the phase.
+    """
+    return TRADING_MODE in (MODE_PAPER, MODE_LIVE)
+
+
+def sends_real_orders() -> bool:
+    """True only in live mode. The single predicate that gates real money."""
+    return TRADING_MODE == MODE_LIVE
+
+
+def simulates_fills() -> bool:
+    """True in paper mode, where ``src.paper_broker`` fills instead of the exchange."""
+    return TRADING_MODE == MODE_PAPER
 
 # Share of a bar's volume a single order may take, in paper and backtest alike.
 MAX_VOLUME_PARTICIPATION: float = _float("MAX_VOLUME_PARTICIPATION", 0.10)

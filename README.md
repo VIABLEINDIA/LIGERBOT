@@ -455,16 +455,27 @@ python -m src.briefing evening     # each post-close
 
 ### Three trading modes
 
-`DRY_RUN` is replaced by `TRADING_MODE`:
+`TRADING_MODE` is the single source of truth; `DRY_RUN` is **derived** from it:
 
-| Mode | Fills |
-|---|---|
-| `dry_run` | Nothing fills. Orders are logged and discarded — a wiring check. |
-| `paper` | Realistic simulated fills: next-bar open, slippage, costs, liquidity cap. |
-| `live` | Real orders to the broker. |
+| Mode | Broker session | Real orders | Fills |
+|---|---|---|---|
+| `dry_run` | no | no | instant, at the signal price — a wiring check |
+| `paper` | **yes** | no | simulated: next-bar open, slippage, costs, liquidity cap |
+| `live` | yes | **yes** | the exchange |
 
-`run_all.py` starts **exactly one** executor for the mode. Running both the paper broker
-and the execution engine would fill every order twice.
+**Paper mode needs a real broker session.** Equity comes from the broker (D1) and the
+position manager reconciles against it — only *order placement* is simulated. When
+`TRADING_MODE` and `DRY_RUN` were independent settings they could disagree, and paper mode
+silently ran on a *configured* equity figure with reconciliation disabled. Since Phase 4
+exists to reconcile paper against backtest, that invalidated the very sessions it was
+accumulating. They can no longer diverge.
+
+An unrecognised `TRADING_MODE` fails at import rather than defaulting — a typo there would
+otherwise decide whether real orders are sent.
+
+`run_all.py` starts **exactly one** filler per mode, and each filler refuses to run in a
+mode it does not own. Both consume `approved_orders` from separate consumer groups, so
+running both would fill every order twice — while looking entirely healthy.
 
 ### Why paper mode had to be rebuilt
 
