@@ -74,6 +74,21 @@ A test consumer (`src/consumer.py`) is included to verify the ingestion → even
 pip install -r requirements.txt
 ```
 
+The **Kotak SDK is deliberately not in `requirements.txt`.** `neo_api_client` hard-pins
+`certifi==2022.12.7`, `urllib3==1.26.14`, `websockets==8.1` and `pandas==2.2.3`, so
+installing it into a shared environment downgrades those for every other project there.
+That is not hypothetical — it happened during development and broke this project's own test
+suite at C level, along with several unrelated tools.
+
+Nothing in `src/` imports the SDK at module scope, so the whole suite runs without it. Only
+the processes that actually talk to the broker need it, and they should get it in isolation:
+
+```bash
+python -m venv .venv-kotak
+.venv-kotak/bin/pip install -r requirements.txt -r requirements-broker.txt
+.venv-kotak/bin/python -m tools.probe_kotak_history
+```
+
 ### 2. Bring up the infrastructure (Redis + InfluxDB)
 
 ```bash

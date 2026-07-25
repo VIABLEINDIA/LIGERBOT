@@ -1,0 +1,135 @@
+name: CI
+
+# The repository is public and the test suite is the only thing standing between an edit
+# and a silently broken trading system, so it runs on every push and pull request.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes an in-flight run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false        # one version failing should not hide the other's result
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        # requirements-broker.txt is deliberately NOT installed. The Kotak SDK pins
+        # pandas==2.2.3, urllib3==1.26.14 and others, which would downgrade the
+        # environment out from under the suite. Nothing imports it at module scope.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Confirm the broker SDK is absent
+        # If this ever succeeds, requirements.txt has regained the SDK and the pins above
+        # are silently in force again.
+        run: |
+          if python -c "import neo_api_client" 2>/dev/null; then
+            echo "::error::neo_api_client is installed in CI. It hard-pins old shared"
+            echo "::error::packages; keep it in requirements-broker.txt only."
+            exit 1
+          fi
+          echo "SDK absent, as intended — the suite runs without it."
+
+      - name: Run tests
+        env:
+          # Explicit rather than inherited: a mode misread from a stray environment
+          # variable would change what the suite is actually exercising.
+          TRADING_MODE: dry_run
+        run: pytest -q
+
+  demos:
+    name: verification demos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Phase demos
+        env:
+          TRADING_MODE: dry_run
+        # The fast demos only. demo_phase1 and demo_phase2 run full backtests and
+        # walk-forward sweeps — minutes each — so they are left to `workflow_dispatch`
+        # and local runs rather than paid for on every push.
+        run: |
+          python demo_phase0.py
+          python demo_phase3.py
+          python demo_phase4.py
+          python demo_phase5.py
+
+      - name: Phase 5 guard must still refuse
+        # The guard blocking is a feature, not a failure. If this ever clears in CI it
+        # means a prerequisite check was weakened or removed.
+        run: |
+          if python -m src.live_guard check | grep -q "CLEARED"; then
+            echo "::error::The live guard CLEARED in CI. It must refuse — no validated"
+            echo "::error::strategy, no paper sessions, no broker probe."
+            exit 1
+          fi
+          echo "Live guard correctly refuses."
+
+  hygiene:
+    name: secrets and hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0      # scan all history, not just the tip
+
+      - name: No .env or local state committed
+        run: |
+          for path in .env .venv-kotak state bar_data sessions; do
+            if git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+              echo "::error::$path is tracked in git. It must be ignored."
+              exit 1
+            fi
+          done
+          echo "No ignored paths are tracked."
+
+      - name: No credential-shaped strings in history
+        run: |
+          if git log --all -p | grep -nE '(gho_[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|sk-[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16})'; then
+            echo "::error::A credential-shaped string appears in git history."
+            exit 1
+          fi
+          echo "No credential patterns found."
+
+      - name: The env template ships no chosen risk tolerance
+        # LIVE_MAX_DAILY_LOSS states how much a particular operator is willing to lose.
+        # A cloned repo must never inherit someone else's figure.
+        run: |
+          value=$(grep '^LIVE_MAX_DAILY_LOSS=' .env.example | cut -d= -f2-)
+          if [ -n "$value" ]; then
+            echo "::error::.env.example ships LIVE_MAX_DAILY_LOSS=$value. It must be blank."
+            exit 1
+          fi
+          echo "Template ships the daily loss cap unset, as intended."

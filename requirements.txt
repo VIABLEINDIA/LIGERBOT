@@ -1,17 +1,23 @@
+# Core runtime + test dependencies.
+#
+# The Kotak Neo SDK is deliberately NOT here — see requirements-broker.txt. It hard-pins
+# certifi==2022.12.7, urllib3==1.26.14, websockets==8.1 and pandas==2.2.3, so installing it
+# into a shared environment downgrades those for every other project present. Keeping it
+# out means `pip install -r requirements.txt` is safe anywhere, and CI can use this file
+# unchanged.
+
 # --- Event bus ---
 redis>=5.0.0
-
-# --- Kotak Neo SDK (v2.0) ---
-# Installed directly from GitHub. Uncomment / run manually if pip can't reach git:
-#   pip install "git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client"
-neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client
 
 # --- Time-series storage ---
 influxdb-client>=1.40.0
 
 # --- Bar store (the self-recorded historical dataset, DESIGN.md D5) ---
-pandas>=2.0.0
+pandas>=2.3.0
 pyarrow>=14.0.0           # Parquet engine
+
+# --- HTTP (scrip-master download) ---
+requests>=2.31.0
 
 # --- Auth / utilities ---
 pyotp>=2.9.0              # automated TOTP generation for Kotak Neo login

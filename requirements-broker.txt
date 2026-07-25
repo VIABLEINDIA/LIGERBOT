@@ -1,0 +1,22 @@
+# Kotak Neo SDK — install into an ISOLATED environment, never a shared one.
+#
+# neo_api_client v2.0.0 hard-pins old versions of widely-shared packages:
+#
+#   certifi==2022.12.7   idna==2.10        numpy==2.1.0
+#   pandas==2.2.3        requests==2.32.3  urllib3==1.26.14   websockets==8.1
+#
+# Installing it globally downgrades all of those for every other project in the same
+# environment. That is not hypothetical — it happened here, and it broke this project's own
+# test suite at C-level along with several unrelated tools.
+#
+# Nothing in src/ imports the SDK at module scope; both import sites are inside functions
+# (src/auth.py, src/auth_session.py). So the whole test suite runs without it, and only the
+# processes that actually talk to the broker need this file.
+#
+#   python -m venv .venv-kotak
+#   .venv-kotak/bin/pip install -r requirements.txt -r requirements-broker.txt
+#   .venv-kotak/bin/python -m tools.probe_kotak_history
+#
+# On Windows use .venv-kotak\Scripts\ instead of .venv-kotak/bin/.
+
+neo_api_client @ git+https://github.com/Kotak-Neo/Kotak-neo-api-v2.git@v2.0.2#egg=neo_api_client
