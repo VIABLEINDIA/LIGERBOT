@@ -136,6 +136,15 @@ KOTAK_CONSUMER_KEY: str = os.getenv("KOTAK_CONSUMER_KEY", "")
 KOTAK_CONSUMER_SECRET: str = os.getenv("KOTAK_CONSUMER_SECRET", "")
 # Optional tracking key the SDK accepts as neo_fin_key.
 KOTAK_NEO_FIN_KEY: str = os.getenv("KOTAK_NEO_FIN_KEY", "")
+
+# Shared broker session (DESIGN.md 3.8). A TOTP code is single-use within its 30-second
+# window, so several modules logging in at once collide and all but one are rejected as
+# replays. One module logs in and shares the session; the rest restore it.
+# TTL spans a trading day with margin — the key is also dated, so a new day forces a
+# fresh login regardless.
+KOTAK_SESSION_TTL_SECONDS: int = _int("KOTAK_SESSION_TTL_SECONDS", 10 * 3600)
+# Bounds a crash mid-login: the lock expires rather than deadlocking every module.
+KOTAK_LOGIN_LOCK_TTL_SECONDS: int = _int("KOTAK_LOGIN_LOCK_TTL_SECONDS", 60)
 KOTAK_MOBILE: str = os.getenv("KOTAK_MOBILE", "")
 KOTAK_UCC: str = os.getenv("KOTAK_UCC", "")
 KOTAK_MPIN: str = os.getenv("KOTAK_MPIN", "")

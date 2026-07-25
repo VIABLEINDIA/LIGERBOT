@@ -120,10 +120,13 @@ def _on_close(message: Any) -> None:
 
 
 def _connect_and_subscribe():
-    """Authenticate, wire callbacks and subscribe. Returns (client, tokens)."""
-    from src.auth import authenticate_neo
+    """Obtain a session, wire callbacks and subscribe. Returns (client, tokens)."""
+    from src.auth_session import get_session
 
-    client = authenticate_neo()
+    # Shared session rather than an independent login: a TOTP code is single-use within
+    # its 30-second window, and this module starts alongside two others that also need a
+    # broker session (DESIGN.md 3.8).
+    client = get_session(_redis)
     client.on_message = _on_message
     client.on_error = _on_error
     client.on_open = _on_open

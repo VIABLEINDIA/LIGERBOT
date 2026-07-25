@@ -291,8 +291,12 @@ def main() -> None:
         # Paper mode needs the broker too: equity must come from it (D1). Branching on
         # DRY_RUN here used to skip this in paper mode, so sizing silently fell back to
         # a configured figure and every recorded session was invalid.
-        from src.auth import authenticate_neo
-        neo = authenticate_neo()
+        #
+        # Shared session: whichever module reaches this first logs in once and publishes
+        # it; the rest restore it. A TOTP code is single-use within its 30-second window,
+        # so independent logins across modules collide and all but one are rejected.
+        from src.auth_session import get_session
+        neo = get_session(event_bus.get_client())
 
     master = None
     try:

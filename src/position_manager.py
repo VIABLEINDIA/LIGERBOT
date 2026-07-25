@@ -427,8 +427,8 @@ def main() -> None:
         # Reconciliation is the point of this module, and paper mode needs it as much as
         # live does — a paper session whose book was never checked against the broker
         # cannot be reconciled against a backtest afterwards.
-        from src.auth import authenticate_neo
-        neo = authenticate_neo()
+        from src.auth_session import get_session
+        neo = get_session(event_bus.get_client())
     else:
         log.warning("Mode is %r — no broker connection, so reconciliation is DISABLED. "
                     "The book tracks fills but cannot be verified against reality. Use "

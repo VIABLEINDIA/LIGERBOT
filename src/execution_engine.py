@@ -83,11 +83,23 @@ class ExecutionEngine:
         )
 
     def _ensure_broker(self):
+        """Obtain the shared session, lazily — only when a real order is imminent."""
         if self.neo is None:
-            from src.auth import authenticate_neo
+            from src.auth_session import get_session
 
-            self.neo = authenticate_neo()
+            self.neo = get_session(self.client)
         return self.neo
+
+    def _reauthenticate(self) -> None:
+        """Re-establish the session after the broker reports it expired.
+
+        Nothing acted on ``KotakSessionExpired`` before this: a session expiring mid-day
+        left the module retrying a call that would fail identically forever.
+        """
+        from src.auth_session import refresh_after_expiry
+
+        log.warning("Broker session expired — re-establishing.")
+        self.neo = refresh_after_expiry(self.client)
 
     def _trading_symbol(self, instrument_id: str) -> str:
         """Resolve the canonical id to the broker's symbol (fixes B4).
@@ -241,9 +253,16 @@ class ExecutionEngine:
     def _reconcile_live_orders(self) -> None:
         """Apply the broker's view of every working order."""
         try:
-            report = parse_order_report(self._ensure_broker().order_report())
-        except Exception as exc:  # noqa: BLE001 - broker SDKs raise widely
-            log.error("order_report() failed (%s) — cannot verify working orders.", exc)
+            response = kotak_api.safe_call(self._ensure_broker(), "order_report",
+                                           allow_empty=True)
+            report = parse_order_report(response)
+        except kotak_api.KotakSessionExpired:
+            # Retrying would fail identically forever; a new session is required.
+            self._reauthenticate()
+            return
+        except kotak_api.KotakAPIError as exc:
+            log.error("order_report() failed (%s) — cannot verify working orders. Their "
+                      "state is unchanged, NOT assumed complete.", exc)
             return
 
         for order in self.registry.live_orders():

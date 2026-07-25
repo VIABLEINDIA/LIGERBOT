@@ -978,7 +978,46 @@ every order and both would fill it — double-counting every trade while appeari
 `run_all.py` already started only one; now neither will start in the wrong mode even if
 launched by hand.
 
-### 5.5 Cross-referencing other Kotak integrations on this machine
+### 5.5 One login per session — and how fixing paper mode made it urgent
+
+§3.8 specified a shared broker session and it was never built: four modules each called
+`authenticate_neo()` independently. Every call performs a full `totp_login` +
+`totp_validate`, and **a TOTP code is single-use within a 30-second window**. `run_all.py`
+staggers module startup by one second, so modules starting together generate the *same*
+code and all but one are rejected as replays.
+
+**Fixing paper mode (§5.4) turned this from latent to blocking.** Before that fix, paper
+authenticated in one module — the other two skipped the broker, which was the bug. After
+it, paper authenticates in three. So correcting one defect exposed a second that had been
+hidden behind it, and paper mode would not have started.
+
+**A session is not one token.** The SDK's `configuration` carries `sid`, `bearer_token`,
+`edit_token`, `edit_sid`, `view_token` and `base_url`, all populated by the two-step login.
+Passing only `access_token` to a fresh `NeoAPI` leaves the rest unset and authenticated
+calls fail in ways that look like permission errors. `src/auth_session.py` captures the
+whole set rather than guessing which fields are load-bearing.
+
+**Coordination without a separate process.** Whichever module needs a session first takes a
+Redis lock, logs in once, and publishes it; the others restore it. Exactly one TOTP is
+consumed however many modules start at once. Design details that matter:
+
+- **The lock has a TTL.** A crash mid-login expires rather than deadlocking every module
+  for the rest of the day.
+- **A waiting caller gives up rather than racing.** Starting a competing login would burn
+  a second code in the same window and be rejected anyway.
+- **Sessions are keyed by trading day**, so a new day always re-logs in — a stale token
+  fails mid-session rather than at startup, which is far worse.
+- **No Redis degrades to a direct login.** A broken cache should cost coordination, not
+  stop a single module from working.
+- **An unauthenticated capture is refused.** Sharing one would hand other modules a client
+  that fails later and less obviously than it would have failed at the source.
+
+This also supplies something that was entirely missing: **expiry recovery.**
+`kotak_api.KotakSessionExpired` existed but nothing acted on it, so a session expiring
+mid-day left modules retrying a call that would fail identically forever. The execution
+engine's reconciliation path now re-establishes the session instead.
+
+### 5.6 Cross-referencing other Kotak integrations on this machine
 
 Four other projects on this machine talk to Kotak Neo (`D:\APEXBOT`,
 `D:\Aishwarya\apex-trading-bot`, `D:\JEANS`, `D:\BALU`). Reading them was worth it — one
@@ -1025,7 +1064,7 @@ project, so neither was read for code.
 `order_report()`, `scrip_master()` and `search_scrip()` response shapes, so a single
 credentialed run settles the two open mappings instead of requiring a second round trip.
 
-### 5.6 Post-build review findings
+### 5.7 Post-build review findings
 
 A deliberately adversarial pass over the finished system, motivated by the track record:
 a real defect had surfaced in *every* phase, and always through testing rather than
@@ -1061,7 +1100,7 @@ the per-trade budget across stop distances from 0.2% to 10%; profits correctly c
 headroom in the worst-case gate; the position book's reversal-through-zero case realising
 P&L only on the closed portion and re-pricing the remainder. All held.
 
-### 5.7 Resolved after Phase 5
+### 5.8 Resolved after Phase 5
 
 **The NSE holiday calendar was wrong, and it mattered.** The list shipped in Phase 0 was
 written from recall and marked provisional. Cross-checked against two independent published
