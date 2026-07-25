@@ -31,6 +31,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import kotak_api
 from src.instruments import InstrumentMaster
 from src.kill_switch import KillSwitch
 from src.order_state import (
@@ -346,6 +347,8 @@ class ExecutionEngine:
 
 
 def main() -> None:
+    # The SDK sets no per-request timeout; bound it before any network call.
+    kotak_api.bound_network_calls()
     master = None
     try:
         from pathlib import Path

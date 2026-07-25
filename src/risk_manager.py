@@ -29,6 +29,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import kotak_api
 from src import feed_health
 from src import market_calendar as cal
 from src.account import SessionEquity
@@ -282,6 +283,8 @@ class RiskManager:
 
 
 def main() -> None:
+    # The SDK sets no per-request timeout; bound it before any network call.
+    kotak_api.bound_network_calls()
     neo = None
     if not config.DRY_RUN:
         from src.auth import authenticate_neo

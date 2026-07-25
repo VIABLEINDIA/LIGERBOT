@@ -23,6 +23,7 @@ from typing import Any, Dict
 
 import config
 from src import event_bus
+from src import kotak_api
 from src import feed_health
 
 logging.basicConfig(
@@ -234,6 +235,8 @@ def _handle_signal(signum, _frame) -> None:
 
 
 def main() -> None:
+    # The SDK sets no per-request timeout; bound it before any network call.
+    kotak_api.bound_network_calls()
     parser = argparse.ArgumentParser(description="LIGERBOT data ingestion layer")
     parser.add_argument("--simulate", action="store_true",
                         help="emit a synthetic feed instead of connecting to Kotak Neo")

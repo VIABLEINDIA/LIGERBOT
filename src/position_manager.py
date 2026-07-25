@@ -29,6 +29,8 @@ from typing import Any, Dict, List, Optional
 
 import config
 from src import event_bus
+from src import kotak_api
+from src import kotak_api
 from src import market_calendar as cal
 from src.kill_switch import KillSwitch
 
@@ -349,10 +351,22 @@ class PositionManager:
     def reconcile_now(self) -> Optional[ReconciliationResult]:
         if self.neo is None:
             return None
+
+        # The SDK returns None (not an exception) when positions() fails, and it returns
+        # error payloads as data. Left unguarded, a transient failure looked exactly like
+        # "the broker holds nothing" — and reconciliation would then discard every open
+        # position from the book. `safe_call` raises instead, so a failed call aborts
+        # reconciliation rather than rewriting our record of what is open.
         try:
-            payload = self.neo.positions()
-        except Exception as exc:  # noqa: BLE001
-            log.error("positions() failed (%s) — cannot verify the book.", exc)
+            payload = kotak_api.safe_call(self.neo, "positions", allow_empty=True)
+        except kotak_api.KotakSessionExpired as exc:
+            log.error("%s — halting rather than trading on an unverifiable book.", exc)
+            self.kill_switch.halt(f"broker session expired: {exc}",
+                                  source="position_manager")
+            return None
+        except kotak_api.KotakAPIError as exc:
+            log.error("positions() failed (%s) — skipping reconciliation. The book is "
+                      "unchanged; it is NOT assumed flat.", exc)
             return None
 
         broker = parse_broker_positions(payload)
@@ -406,6 +420,8 @@ class PositionManager:
 
 
 def main() -> None:
+    # The SDK sets no per-request timeout; bound it before any network call.
+    kotak_api.bound_network_calls()
     neo = None
     if not config.DRY_RUN:
         from src.auth import authenticate_neo

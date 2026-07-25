@@ -24,7 +24,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 log = logging.getLogger("ligerbot.instruments")
 
@@ -143,9 +143,19 @@ KOTAK_COLUMNS = {
     "name": ("pSymbolName", "pDesc", "name"),
     "series": ("pGroup", "pSeries", "series"),
     "lot_size": ("lLotSize", "lot_size"),
-    "tick_size": ("lTickSize", "tick_size"),
+    # dTickSize first: a working integration on this machine (D:\JEANS), which mirrors
+    # openalgo's verified approach, reads dTickSize. lTickSize was this module's original
+    # guess and is kept only as a fallback.
+    "tick_size": ("dTickSize", "lTickSize", "tick_size"),
     "isin": ("pISIN", "isin"),
 }
+
+# Fallback when scrip_master() does not hand back a usable URL. Pattern taken from a
+# working integration; the date component is today's, so a stale cache is impossible.
+SCRIP_MASTER_URL_TEMPLATE = (
+    "https://lapi.kotaksecurities.com/wso2-scripmaster/v1/prod/"
+    "{date}/transformed-v1/{segment}-v1.csv"
+)
 
 
 def _first_present(row: Dict[str, str], keys: Sequence[str]) -> str:
@@ -216,6 +226,102 @@ def load_scrip_master_csv(path: str | Path, segment: str = "nse_cm") -> List[Ins
     """Load and normalize a scrip-master CSV downloaded from the broker."""
     with open(path, newline="", encoding="utf-8-sig") as handle:
         return parse_scrip_master(csv.DictReader(handle), segment=segment)
+
+
+def resolve_scrip_master_url(
+    neo_client: Any = None, segment: str = "nse_cm", *, day: Optional[dt.date] = None
+) -> str:
+    """Find the URL of today's scrip-master CSV.
+
+    ``scrip_master()`` returns a **URL string**, not rows — the SDK resolves the location
+    and does not parse the file. This module originally assumed rows, which is why B4 had
+    no path to success: there was nothing to feed the parser.
+
+    Falls back to the published URL pattern if the SDK gives nothing usable, so a single
+    flaky call does not block startup.
+    """
+    day = day or dt.date.today()
+    if neo_client is not None:
+        try:
+            result = neo_client.scrip_master(exchange_segment=segment)
+            if isinstance(result, str) and result.startswith("http"):
+                return result
+            # Some versions return a list or an envelope of per-segment paths.
+            if isinstance(result, dict):
+                for value in result.values():
+                    if isinstance(value, str) and value.startswith("http"):
+                        return value
+            if isinstance(result, list):
+                for value in result:
+                    if isinstance(value, str) and segment in value:
+                        return value
+            log.warning("scrip_master() returned no usable URL (%r) — using the "
+                        "published fallback pattern.", str(result)[:120])
+        except Exception as exc:  # noqa: BLE001 - any SDK failure just falls back
+            log.warning("scrip_master() failed (%s) — using the published fallback "
+                        "pattern.", exc)
+    return SCRIP_MASTER_URL_TEMPLATE.format(date=day.isoformat(), segment=segment)
+
+
+def download_scrip_master(
+    url: str, segment: str = "nse_cm", *, timeout: float = 60.0
+) -> List[Instrument]:
+    """Download and parse the scrip-master CSV.
+
+    Header cleaning is not cosmetic: the published file carries stray spaces and
+    semicolons in its column names, so ``pSymbol`` may arrive as ``pSymbol;`` or
+    ``p Symbol`` and every lookup would miss.
+    """
+    import csv as _csv
+    import io
+
+    import requests
+
+    log.info("Downloading the %s scrip master from %s", segment, url)
+    response = requests.get(url, timeout=timeout)
+    response.raise_for_status()
+
+    text = response.text
+    first_newline = text.find("\n")
+    if first_newline > 0:
+        header = text[:first_newline].replace(" ", "").replace(";", "")
+        text = header + text[first_newline:]
+
+    rows = list(_csv.DictReader(io.StringIO(text)))
+    log.info("Scrip master: %d raw row(s).", len(rows))
+    return parse_scrip_master(rows, segment=segment)
+
+
+def load_or_download_master(
+    neo_client: Any = None,
+    *,
+    segment: str = "nse_cm",
+    cache_dir: Optional[str | Path] = None,
+    day: Optional[dt.date] = None,
+    force_refresh: bool = False,
+) -> "InstrumentMaster":
+    """Today's instrument master, from cache if fresh, else downloaded.
+
+    Cached per day because the scrip master changes daily and a stale one silently maps
+    symbols to the wrong tokens.
+    """
+    day = day or dt.date.today()
+    cache_dir = cache_dir or getattr(__import__("config"), "SCRIP_MASTER_DIR",
+                                     "state/scrip_master")
+    cache_path = InstrumentMaster.cache_path(cache_dir, day, segment)
+
+    if not force_refresh:
+        cached = InstrumentMaster.load_cache(cache_path)
+        if cached is not None and len(cached):
+            log.info("Loaded %d instruments from today's cache (%s).",
+                     len(cached), cache_path)
+            return cached
+
+    url = resolve_scrip_master_url(neo_client, segment, day=day)
+    master = InstrumentMaster(download_scrip_master(url, segment))
+    if len(master):
+        master.save_cache(cache_path)
+    return master
 
 
 class InstrumentMaster:
