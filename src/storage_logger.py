@@ -38,7 +38,7 @@ STREAM_MEASUREMENTS = {
 
 
 class StorageLogger:
-    def __init__(self) -> None:
+    def __init__(self, writer=None) -> None:
         self.client = event_bus.get_client()
         # Consumer groups rather than "$" cursors (fixes B6 for the archive too): an
         # archiver that silently skipped events during a restart would leave gaps in the
@@ -48,91 +48,53 @@ class StorageLogger:
             f"{config.CONSUMER_GROUP_PREFIX}.storage", "storage-1",
             max_deliveries=config.MAX_DELIVERIES,
         )
-        self.write_api = None
-        self.influx = None
-        self._init_influx()
+        from src.alerting import get_alerter
+        from src.influx_writer import BatchingInfluxWriter
 
-    def _init_influx(self) -> None:
-        if not config.INFLUX_TOKEN or config.INFLUX_TOKEN == "YOUR_INFLUX_API_TOKEN":
-            log.warning("INFLUX_TOKEN not set — running in console-only mode "
-                        "(events logged, not persisted).")
-            return
-        try:
-            from influxdb_client import InfluxDBClient
-            from influxdb_client.client.write_api import SYNCHRONOUS
-
-            self.influx = InfluxDBClient(
-                url=config.INFLUX_URL, token=config.INFLUX_TOKEN, org=config.INFLUX_ORG
-            )
-            self.write_api = self.influx.write_api(write_options=SYNCHRONOUS)
-            log.info("Connected to InfluxDB at %s (bucket=%s).",
-                     config.INFLUX_URL, config.INFLUX_BUCKET)
-        except ImportError:
-            log.warning("influxdb-client not installed — console-only mode.")
-        except Exception as exc:  # pragma: no cover - network dependent
-            log.warning("Could not connect to InfluxDB (%s) — console-only mode.", exc)
-
-    def _to_float(self, value) -> Optional[float]:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
+        # Batched and non-blocking (defect B12). One synchronous write per event could not
+        # keep up with real tick volume: the archiver fell behind, stopped acking, and the
+        # stream trimmed past its own unacked messages — so the archive developed holes
+        # exactly when the most was happening.
+        self.writer = writer or BatchingInfluxWriter(alerter=get_alerter(self.client))
+        self.writer.start()
 
     def _write(self, measurement: str, fields: dict) -> None:
-        if self.write_api is None:
-            log.info("archive[%s] %s", measurement, fields)
-            return
-        try:
-            from influxdb_client import Point, WritePrecision
-
-            point = Point(measurement)
-            instrument = fields.get("instrument")
-            if instrument:
-                point = point.tag("instrument", str(instrument))
-            action = fields.get("action") or fields.get("signal")
-            if action:
-                point = point.tag("action", str(action))
-
-            wrote_field = False
-            for key in ("ltp", "price", "quantity", "short_ma", "long_ma"):
-                num = self._to_float(fields.get(key))
-                if num is not None:
-                    point = point.field(key, num)
-                    wrote_field = True
-            for key in ("status", "order_no", "strategy_name"):
-                if fields.get(key) is not None:
-                    point = point.field(key, str(fields[key]))
-                    wrote_field = True
-            if not wrote_field:
-                point = point.field("event", 1)
-
-            ts = self._to_float(fields.get("timestamp"))
-            if ts is not None:
-                point = point.time(int(ts * 1_000_000_000), WritePrecision.NS)
-
-            self.write_api.write(bucket=config.INFLUX_BUCKET, org=config.INFLUX_ORG, record=point)
-        except Exception as exc:  # pragma: no cover - network dependent
-            log.warning("InfluxDB write failed (%s) — logging instead: %s", exc, fields)
+        """Queue one point. Returns immediately — never blocks on the network."""
+        self.writer.write(measurement, fields)
 
     def run(self) -> None:
         if not event_bus.ping(self.client):
             log.error("Redis not reachable — start it with `docker compose up -d`.")
             return
         log.info("Storage Logger observing %d streams → %s",
-                 len(STREAM_MEASUREMENTS), "InfluxDB" if self.write_api else "console")
+                 len(STREAM_MEASUREMENTS),
+                 "InfluxDB (batched)" if self.writer.connected else "console")
+        last_report = time.monotonic()
+
         while True:
             for stream_name, entry_id, fields in self.consumer.read(
                     count=500, block_ms=2000):
                 measurement = STREAM_MEASUREMENTS.get(stream_name, stream_name)
                 self._write(measurement, fields)
-                # Acked after the write: archiving must never lose an event, but it must
-                # also never backpressure the trading path, so failures are logged inside
-                # _write rather than raised.
+                # Acked once the point is QUEUED, not once it is written. The archive is
+                # best-effort by design: holding the ack until a possibly-dead backend
+                # confirms would grow the pending list until the stream trimmed past it,
+                # losing far more than the occasional dropped point — and stalling the
+                # consumer group along the way.
                 self.consumer.ack(stream_name, entry_id)
 
+            if time.monotonic() - last_report >= 60.0:
+                snapshot = self.writer.snapshot()
+                if snapshot["dropped"]:
+                    log.warning("Archive: %(written)s written, %(dropped)s dropped "
+                                "(%(drop_ratio).2%% ), %(queued)s queued.", snapshot)
+                else:
+                    log.debug("Archive: %(written)s written, %(queued)s queued.", snapshot)
+                last_report = time.monotonic()
+
     def close(self) -> None:
-        if self.influx is not None:
-            self.influx.close()
+        """Drain the queue before exiting — unflushed points are lost otherwise."""
+        self.writer.close()
 
 
 def main() -> None:

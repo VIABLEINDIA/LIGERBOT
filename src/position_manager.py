@@ -378,6 +378,18 @@ class PositionManager:
             log.error("RECONCILIATION MISMATCH — %s", result.summary())
             for detail in result.details:
                 log.error("  %s", detail)
+            try:
+                from src.alerting import get_alerter
+
+                get_alerter(self.client).critical(
+                    "Position reconciliation mismatch",
+                    result.summary(),
+                    source="position_manager",
+                    dedup_key="reconcile_mismatch",
+                    context={"details": "; ".join(result.details[:3])},
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error("Could not raise the reconciliation alert: %s", exc)
             if result.discrepancy_count >= config.RECONCILE_HALT_THRESHOLD:
                 self.kill_switch.halt(
                     f"position reconciliation mismatch: {result.summary()}",

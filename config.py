@@ -168,6 +168,7 @@ STREAM_POSITION_UPDATES = "position_updates"
 STREAM_ORDER_EVENTS = "order_events"
 STREAM_DEAD_LETTER = "dead_letter"
 STREAM_HEARTBEAT = "heartbeat"
+STREAM_ALERTS = "alerts"
 
 # Approximate cap on every stream. Without this, tick volume grows Redis without bound
 # until it refuses writes — which stops the market feed mid-session.
@@ -207,6 +208,32 @@ ORDER_POLL_INTERVAL_SECONDS: float = _float("ORDER_POLL_INTERVAL_SECONDS", 2.0)
 ORDER_DEDUPE_TTL_SECONDS: int = _int("ORDER_DEDUPE_TTL_SECONDS", 86_400)
 
 # Reconciliation (DESIGN.md 3.2)
+# --------------------------------------------------------------------------
+# Alerting (DESIGN.md 3.9)
+# --------------------------------------------------------------------------
+# A halt that only reaches stdout is invisible during a session nobody is watching.
+# Alerts always reach the log and a Redis stream; a webhook is optional.
+# Generic JSON POST rather than a vendor-specific integration.
+ALERT_WEBHOOK_URL: str = os.getenv("ALERT_WEBHOOK_URL", "")
+# Repeats of the same condition are suppressed for this long. A stale feed evaluated every
+# second would otherwise emit an alert every second, and a stream nobody can read is the
+# same as no alerts. The suppressed count is reported when it next fires.
+ALERT_COOLDOWN_SECONDS: float = _float("ALERT_COOLDOWN_SECONDS", 300.0)
+
+# --------------------------------------------------------------------------
+# Archiving (DESIGN.md 3.9, defect B12)
+# --------------------------------------------------------------------------
+# Batched, non-blocking Influx writes. One synchronous write per event cannot keep up with
+# real tick volume: the archiver falls behind, the stream trims past its unacked messages,
+# and the archive silently develops holes.
+INFLUX_BATCH_SIZE: int = _int("INFLUX_BATCH_SIZE", 500)
+INFLUX_FLUSH_INTERVAL_MS: int = _int("INFLUX_FLUSH_INTERVAL_MS", 2_000)
+# Bounded queue, drop-oldest on overflow. The archive is best-effort by design: falling
+# behind must cost archive completeness, never consumer progress.
+INFLUX_QUEUE_MAXLEN: int = _int("INFLUX_QUEUE_MAXLEN", 50_000)
+# Alert if the drop rate over a session exceeds this share of points.
+INFLUX_DROP_ALERT_RATIO: float = _float("INFLUX_DROP_ALERT_RATIO", 0.01)
+
 RECONCILE_INTERVAL_SECONDS: float = _float("RECONCILE_INTERVAL_SECONDS", 60.0)
 # Quantity mismatch against the broker that triggers a halt rather than a correction.
 RECONCILE_HALT_THRESHOLD: int = _int("RECONCILE_HALT_THRESHOLD", 1)

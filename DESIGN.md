@@ -1017,7 +1017,48 @@ This also supplies something that was entirely missing: **expiry recovery.**
 mid-day left modules retrying a call that would fail identically forever. The execution
 engine's reconciliation path now re-establishes the session instead.
 
-### 5.6 Cross-referencing other Kotak integrations on this machine
+### 5.6 Alerting, and the second half of B12
+
+**Alerting (§3.9).** A halt logged `ERROR` to stdout and nothing else. During a six-hour
+session nobody is watching that terminal, so a halt at 11:03 stayed invisible until someone
+next looked — as did stale feeds, reconciliation mismatches and dead-lettered orders. Three
+properties shaped `src/alerting.py`:
+
+- **No sink may raise into the caller.** A webhook timing out is not a reason to stop
+  managing positions. Every sink failure is caught and logged, and the remaining sinks
+  still run.
+- **Repetition must not become noise.** A stale feed evaluated every second would emit an
+  alert every second, and a stream nobody can read is the same as no alerts. Alerts carry a
+  dedup key and are suppressed for a cooldown; the suppressed count is reported when the
+  condition next fires, so the volume stays visible without the flood.
+- **Alerts persist.** They reach a Redis stream as well as the log, so the evening briefing
+  reports what happened during a session nobody watched — the actual use case.
+
+The webhook sink is a generic JSON POST rather than a Telegram or Slack integration:
+vendor lock-in in an alert path is a poor trade for a few lines saved.
+
+**Archiving (B12, second half).** The archiver wrote one point per event synchronously.
+The failure is indirect and worth stating in full: it blocks on Influx → stops acking → its
+pending list grows → the stream reaches `MAXLEN` and trims entries that were never archived
+→ the archive develops holes, silently, exactly when the most is happening.
+
+So the fix required a decision, not just batching: **the archive is best-effort by design.**
+Falling behind must cost archive completeness, never consumer progress — because a stalled
+archiver eventually costs both. Concretely:
+
+- Points are enqueued and the caller returns immediately; a background thread flushes.
+- The queue is bounded and **drops oldest** on overflow. Oldest rather than newest is
+  deliberate: during a burst, recent data describes the state you are currently in, while
+  old data describes one that has already passed.
+- The storage logger acks once a point is **queued**, not once it is written. Holding the
+  ack until a possibly-dead backend confirms would grow the pending list until the stream
+  trimmed past it — losing far more than the occasional dropped point.
+- Drops are counted and alerted above a threshold. Silent archive gaps are worse than
+  noisy ones.
+- A failed write is **not** requeued. Retrying a failing backend indefinitely is how the
+  queue fills in the first place.
+
+### 5.7 Cross-referencing other Kotak integrations on this machine
 
 Four other projects on this machine talk to Kotak Neo (`D:\APEXBOT`,
 `D:\Aishwarya\apex-trading-bot`, `D:\JEANS`, `D:\BALU`). Reading them was worth it — one
@@ -1064,7 +1105,7 @@ project, so neither was read for code.
 `order_report()`, `scrip_master()` and `search_scrip()` response shapes, so a single
 credentialed run settles the two open mappings instead of requiring a second round trip.
 
-### 5.7 Post-build review findings
+### 5.8 Post-build review findings
 
 A deliberately adversarial pass over the finished system, motivated by the track record:
 a real defect had surfaced in *every* phase, and always through testing rather than
@@ -1100,7 +1141,7 @@ the per-trade budget across stop distances from 0.2% to 10%; profits correctly c
 headroom in the worst-case gate; the position book's reversal-through-zero case realising
 P&L only on the closed portion and re-pricing the remainder. All held.
 
-### 5.8 Resolved after Phase 5
+### 5.9 Resolved after Phase 5
 
 **The NSE holiday calendar was wrong, and it mattered.** The list shipped in Phase 0 was
 written from recall and marked provisional. Cross-checked against two independent published

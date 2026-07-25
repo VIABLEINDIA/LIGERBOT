@@ -274,6 +274,23 @@ class StreamConsumer:
         log.error("DEAD-LETTER %s:%s after %d deliveries — %s",
                   self.stream, entry_id, payload["deliveries"], error)
 
+        # A dead-lettered message is work the system has given up on. That must reach a
+        # human, not just the log — especially on approved_orders, where it means a trade
+        # was never placed.
+        try:
+            from src.alerting import get_alerter
+
+            get_alerter(self.client).critical(
+                "Message dead-lettered",
+                f"{self.stream} gave up on a message after "
+                f"{payload['deliveries']} deliveries: {error}",
+                source=self.group,
+                dedup_key=f"dead_letter:{self.stream}",
+                context={"stream": self.stream, "entry_id": entry_id},
+            )
+        except Exception as exc:  # noqa: BLE001 - alerting must not break consumption
+            log.error("Could not raise the dead-letter alert: %s", exc)
+
     def handle(
         self, entry_id: str, fields: Dict[str, Any], handler
     ) -> bool:

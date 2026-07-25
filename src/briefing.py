@@ -108,6 +108,9 @@ class EveningBriefing:
     session: Optional[SessionRecord] = None
     reconciliation_summary: str = ""
     notes: List[str] = field(default_factory=list)
+    # Alerts raised during the session. The evening report is where a halt that fired at
+    # 11:03 finally reaches whoever needed to know about it.
+    alerts: List[Dict[str, Any]] = field(default_factory=list)
 
     def render(self) -> str:
         lines = [RULE,
@@ -162,6 +165,17 @@ class EveningBriefing:
 
         if self.reconciliation_summary:
             lines += ["", "Reconciliation vs backtest", f"  {self.reconciliation_summary}"]
+
+        if self.alerts:
+            lines += ["", f"Alerts raised today ({len(self.alerts)})"]
+            for alert in self.alerts[:10]:
+                lines.append(f"  [{alert.get('severity', '?').upper():<8}] "
+                             f"{alert.get('title', '')} — {alert.get('message', '')[:80]}")
+            if len(self.alerts) > 10:
+                lines.append(f"  ... and {len(self.alerts) - 10} more")
+            lines.append("")
+            lines.append("  These fired during the session. If this is the first you are")
+            lines.append("  seeing of them, the alert path is not reaching you.")
 
         if self.notes:
             lines += ["", "Notes"] + [f"  - {n}" for n in self.notes]
@@ -235,17 +249,31 @@ def build_morning(
     return briefing
 
 
+def read_alerts(client, *, limit: int = 200) -> List[Dict[str, Any]]:
+    """Alerts recorded on the Redis stream, oldest first."""
+    if client is None:
+        return []
+    try:
+        rows = client.xrange(config.STREAM_ALERTS, count=limit)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not read the alert stream: %s", exc)
+        return []
+    return [fields for _entry_id, fields in rows]
+
+
 def build_evening(
     day: Optional[dt.date] = None,
     *,
     store: Optional[SessionStore] = None,
     reconciliation_summary: str = "",
+    client=None,
 ) -> EveningBriefing:
     """Assemble the post-close report."""
     day = day or cal.now_ist().date()
     session = store.load("paper", day) if store is not None else None
     briefing = EveningBriefing(day=day, session=session,
-                               reconciliation_summary=reconciliation_summary)
+                               reconciliation_summary=reconciliation_summary,
+                               alerts=read_alerts(client))
 
     if session is not None:
         if session.trade_count == 0:
@@ -288,7 +316,11 @@ def main() -> None:
                            f"{'PASS' if result.passed else 'BLOCKED'}")
         except Exception as exc:  # noqa: BLE001
             summary = f"reconciliation unavailable: {exc}"
-        print(build_evening(day, store=store, reconciliation_summary=summary).render())
+        from src import event_bus
+
+        client = event_bus.get_client() if event_bus.ping() else None
+        print(build_evening(day, store=store, reconciliation_summary=summary,
+                            client=client).render())
 
 
 if __name__ == "__main__":

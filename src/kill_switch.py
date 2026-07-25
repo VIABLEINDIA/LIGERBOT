@@ -77,7 +77,29 @@ class KillSwitch:
             "reason": state.reason, "at": state.at, "by": state.by, "source": state.source,
         }))
         log.error("HALT ENGAGED (%s): %s", source, reason)
+        self._alert(state)
         return state
+
+    def _alert(self, state: HaltState) -> None:
+        """Raise a halt where a human will see it.
+
+        A halt reaching only stdout is invisible during a session nobody is watching —
+        which is every session. Failures here are swallowed: an alert that cannot be
+        delivered must not prevent the halt itself from taking effect.
+        """
+        try:
+            from src.alerting import get_alerter
+
+            get_alerter(self.client).critical(
+                "Trading halted",
+                state.reason,
+                source=state.source,
+                dedup_key=f"halt:{state.source}",
+                context={"engaged_at": state.at, "by": state.by},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("Could not raise the halt alert (%s). The halt is still in "
+                      "effect.", exc)
 
     def clear(self) -> None:
         """Lift the halt. Deliberately manual — nothing clears this automatically.
