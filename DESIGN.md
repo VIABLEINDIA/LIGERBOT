@@ -1336,3 +1336,50 @@ an incidental consequence of the weekend check.
 6. **Every trade is traceable** to the exact strategy version, parameters, and bar that
    produced it.
 7. **Own the exit.** Never let the broker's auto-square-off be the strategy's exit.
+
+### 5.12 The first backtest on real market data
+
+Real NSE 5-minute bars, sourced from TradingView as a bootstrap (the Parquet store is
+still empty and the Kotak probe has not run). **39 liquid momentum names, 4 sessions,
+11,700 bars.** The universe came from the scanner shortlist filtered to D6's real
+liquidity floor (Rs 200cr ADV) plus current participation, so these are names a bot could
+actually trade rather than thin movers.
+
+| | trades | expectancy | 95% CI | PF | win rate | net |
+|---|---|---|---|---|---|---|
+| `trend_pullback` v1 | 36 | **-0.2682R** | [-0.503, -0.034] | 0.397 | 25.0% | -24,794 |
+| `sma_crossover` (negative control) | 12 | +0.0465R | [-0.439, +0.532] | 1.177 | 33.3% | +1,425 |
+
+**The negative control beat the strategy.** That is the headline, and it is not a
+comfortable one.
+
+**It is not a friction problem.** This is the finding that changes the diagnosis. An
+earlier 12-name run showed friction as 80% of the loss, which pointed at costs. Widening
+the sample shows **gross P&L before any friction is -15,653, or -435 per trade**. Friction
+itself came in at 254 per trade — **0.099R against the ~0.12R design budget**, so the cost
+model is behaving exactly as §5.2 says it should. The entry logic is losing money on its
+own.
+
+**The regime was hostile, and that is a real caveat rather than an excuse.** Averaged
+across the 39 names the window was **-0.79%**, with two up sessions and two down. D3 exists
+precisely because a long-only strategy looks good in a rising market for reasons unrelated
+to skill — and the converse applies here. A 5% account loss against a 0.79% market decline
+is still a large amplification, but four days is one regime and cannot settle anything.
+
+**The safety machinery worked.** The daily drawdown breaker tripped twice and halted new
+entries; 219 signals were refused across the run (74 worst-case gate, 66 position cap, 59
+open-risk cap, 20 post-halt). Those refusals are the system doing its job, and the loss
+would have been materially larger without them.
+
+**What this does and does not license.** It does not clear or fail the §2.6 gates — the
+data-quality gate blocks the sample outright at 4 trading days against a 20-day minimum. It
+does move the question. Before this run the honest position was "no idea"; the plausible
+range spanned "essentially break-even before costs" to "structurally broken". The upper
+bound of the confidence interval is now **negative**, and gross is negative, so the
+break-even end of that range is excluded for this window.
+
+**The tempting mistake is to tune on it.** Thirty-six trades over four days is exactly the
+sample size that will happily yield a parameter set with positive expectancy and no
+predictive content. That is what §2.5's walk-forward, locked holdout and trial counting
+exist to prevent, and the discipline matters most at the moment the result is
+disappointing. The next input is more data, not more fitting.
