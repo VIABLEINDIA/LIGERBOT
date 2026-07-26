@@ -1,13 +1,20 @@
 # LIGERBOT — Design Document
 
 **Target market:** NSE equities & index instruments, **intraday only** (MIS, flat by session close).
-**Status:** skeleton complete and running end-to-end in simulation. This document specifies
-what must be designed and built to turn that skeleton into something that can be trusted
-with capital.
+**Status:** machinery built and tested; **the strategy is unvalidated and live trading is
+blocked.** Phases 0–5 are implemented — bar building, backtest harness, risk engine,
+paper broker, reconciliation, live guard — behind 1,239 tests at 95% coverage. What does
+*not* exist is evidence: no real market data has been through it, `trend_pullback` v1 has
+never been walk-forward tested against anything but synthetic prices, and the go-live guard
+refuses on seven outstanding prerequisites. That refusal is the system working.
 
-**Scope of this document:** design only — no code. It covers three layers
-(strategy, backtesting, hardening), six resolved decisions (§5.1), and the order in which
-it all gets built (§4).
+Read §4 for per-phase status. Every "complete and verified" there means the *machinery* is
+verified; none of them means the strategy makes money.
+
+**Scope of this document:** design and rationale. It was written before the code and now
+records both — the six resolved decisions (§5.1), the order things were built (§4), and
+§5.2 onward, which is a log of defects found *after* they were built. That section is the
+most useful part of this file: it is what testing caught that reading never would have.
 
 **Settled:** equity read live from the broker each session (D1) · 2% daily loss limit with a
 1.5% total open-risk cap and 0.5% per trade (D2) · long-only v1 (D3) · 1-minute bars stored,
@@ -1159,8 +1166,12 @@ achieve:
   unexamined; another flags its Kotak field names as unverified in its own README. So
   `src/account.py`'s equity mapping remains a guess *everywhere*, and only a live call
   settles it. This is the mapping that mis-sizes every trade by the same factor if wrong.
-- **Scrip-master download.** The nearest implementation is a `NotImplementedError` with a
-  TODO. Nobody here has built it, so B4 stays fail-safe-without-a-success-path.
+- **Scrip-master download.** The nearest implementation across all four projects is a
+  `NotImplementedError` with a TODO — so there was nothing to borrow. **Since written, it
+  has been built here** (`resolve_scrip_master_url` / `download_scrip_master` /
+  `load_or_download_master` in `src/instruments.py`, covered by
+  `tests/test_scrip_master.py`), and B4 now has a success path rather than only a
+  fail-safe. The bullet is kept because it still bounds what borrowing achieved.
 
 **Licences ruled out the richest source.** `D:\APEXBOT\external\` vendors `nautilus_trader`
 (LGPL) and `openalgo` (AGPL) — the latter has verified adapters for many Indian brokers.
