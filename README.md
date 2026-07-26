@@ -4,6 +4,11 @@ An advanced, event-driven **microservices** trading bot built on the **Kotak Neo
 following the architectural blueprint of five decoupled modules communicating over a
 **Redis Streams** event bus.
 
+> 📖 **[MASTER.md](MASTER.md) is the complete reference** — architecture, all 46 modules,
+> the six settled decisions, risk and cost models, both strategies, the backtest → paper →
+> live evidence ladder, every defect testing caught, and the operational runbook.
+> This README is the quick start; [DESIGN.md](DESIGN.md) is the reasoning.
+
 > ⚠️ **Risk disclaimer:** Algorithmic trading involves substantial risk of loss.
 > **No strategy in this repository has been validated on real market data.** The bundled
 > SMA-crossover is a deliberate **negative control** that loses money by design;
