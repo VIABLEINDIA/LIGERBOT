@@ -35,7 +35,8 @@ AT = dt.datetime(2026, 7, 21, 10, 0)
 
 def trade(*, r: float, mfe_r: float = 0.0, mae_r: float = 0.0, bars: int = 10,
           reason: FillReason = FillReason.SIGNAL, risk: float = 10.0,
-          costs: float = 0.0, quantity: int = 100) -> Trade:
+          costs: float = 0.0, quantity: int = 100,
+          slippage_per_share: float = 0.0) -> Trade:
     """A trade with a chosen R outcome and excursion, expressed in R."""
     entry = 1000.0
     return Trade(
@@ -47,6 +48,8 @@ def trade(*, r: float, mfe_r: float = 0.0, mae_r: float = 0.0, bars: int = 10,
         costs=CostBreakdown(brokerage=costs),
         risk_per_share=risk,
         mfe=mfe_r * risk, mae=mae_r * risk, bars_held=bars,
+        entry_slippage_per_share=slippage_per_share,
+        exit_slippage_per_share=slippage_per_share,
     )
 
 
@@ -124,6 +127,76 @@ class TestDistinguishingTheFailureModes:
         never_moved = [trade(r=-1.0, mfe_r=0.05) for _ in range(20)]
         gave_back = [trade(r=-0.8, mfe_r=1.6) for _ in range(20)]
         assert diagnose(never_moved).fault is not diagnose(gave_back).fault
+
+
+class TestSlippageIsNotInvisible:
+    """A defect found by probing rather than reading, in the first version of this module.
+
+    Slippage is baked into entry and exit prices, so it is already inside `r_multiple`.
+    The friction figure originally added back only `costs.total` — the explicit charges —
+    which made a strategy killed by *slippage* indistinguishable from one with no edge.
+
+    A book that is **+0.30R frictionless** and −0.30R net was reported as `MIXED` with "no
+    single dominant cause", which would send someone to redesign a signal that works.
+    That is a worse outcome than no diagnosis: it is a confident wrong answer.
+    """
+
+    def test_a_slippage_driven_loss_is_attributed_to_friction(self):
+        book = [trade(r=-0.30, costs=1.0, slippage_per_share=3.0, mfe_r=0.9)
+                for _ in range(25)]
+        result = diagnose(book)
+        assert result.fault is Fault.FRICTION, (
+            f"got {result.fault.value}: a book profitable before execution cost was "
+            f"blamed on something else")
+
+    def test_frictionless_is_reported_separately_from_gross(self):
+        """metrics.py distinguishes frictionless (before slippage AND charges) from gross
+        (after slippage, before charges). Attribution must use the same vocabulary or the
+        two reports contradict each other."""
+        book = [trade(r=-0.30, costs=1.0, slippage_per_share=3.0) for _ in range(25)]
+        result = diagnose(book)
+        assert result.frictionless_r > 0
+        assert result.gross_r < 0
+        assert result.frictionless_r > result.gross_r
+
+    def test_slippage_appears_in_the_detail(self):
+        book = [trade(r=-0.30, costs=1.0, slippage_per_share=3.0) for _ in range(25)]
+        assert "slippage" in diagnose(book).detail.lower()
+
+    def test_a_charges_driven_loss_is_attributed_to_friction(self):
+        """Profitable on price movement, turned negative by charges alone.
+
+        Note `r` here is the *price* move, and `Trade.r_multiple` subtracts charges from
+        it — so the price move has to sit **below** the charges for the net to go negative
+        while frictionless stays positive. Charges of 300 on 1,000 of risk are 0.30R, so a
+        +0.20R price move nets -0.10R against +0.20R frictionless.
+        """
+        book = [trade(r=0.20, costs=300.0, mfe_r=0.9) for _ in range(25)]
+        result = diagnose(book)
+        assert result.net_r < 0
+        assert result.frictionless_r > 0
+        assert result.fault is Fault.FRICTION
+
+    def test_a_book_that_loses_before_costs_is_not_blamed_on_friction(self):
+        """The mirror, and the reason the previous test needed rewriting. A -0.02R price
+        move with heavy charges is unprofitable *before* the charges, so friction is not
+        the dominant cause however large it looks next to the net figure."""
+        book = [trade(r=-0.02, costs=300.0, mfe_r=0.9) for _ in range(25)]
+        result = diagnose(book)
+        assert result.frictionless_r < 0
+        assert result.fault is not Fault.FRICTION
+
+    def test_a_genuinely_edgeless_book_is_not_blamed_on_friction(self):
+        """The guard against the fix over-firing: no friction, no edge, must still read
+        as ENTRY."""
+        book = [trade(r=-1.0, mfe_r=0.05, costs=0.0, slippage_per_share=0.0)
+                for _ in range(25)]
+        assert diagnose(book).fault is Fault.ENTRY
+
+    def test_zero_slippage_leaves_frictionless_equal_to_gross(self):
+        book = [trade(r=-1.0, mfe_r=0.05, costs=0.0) for _ in range(25)]
+        result = diagnose(book)
+        assert result.frictionless_r == pytest.approx(result.gross_r)
 
 
 class TestTheArithmeticThatSummarisesIt:

@@ -63,7 +63,10 @@ class Attribution:
     avg_win_r: float = 0.0
     avg_loss_r: float = 0.0
     net_r: float = 0.0
-    gross_r: float = 0.0
+    gross_r: float = 0.0            # after slippage, before charges
+    frictionless_r: float = 0.0     # before slippage AND charges
+    slippage_r: float = 0.0
+    charges_r: float = 0.0
     never_moved_pct: float = 0.0
     gave_back_count: int = 0
     quick_stop_pct: float = 0.0
@@ -92,7 +95,11 @@ class Attribution:
 
         lines += [
             f"  trades              {self.trade_count}",
-            f"  net / gross         {self.net_r:+.3f}R / {self.gross_r:+.3f}R per trade",
+            f"  net                 {self.net_r:+.3f}R per trade",
+            f"  gross               {self.gross_r:+.3f}R  (before charges)",
+            f"  frictionless        {self.frictionless_r:+.3f}R  (before slippage too)",
+            f"    slippage          {self.slippage_r:.3f}R"
+            f"   charges {self.charges_r:.3f}R",
             f"  win rate            {self.actual_win_rate:.1%}"
             f"   (break-even needs {self.break_even_win_rate:.1%})",
             f"  reward:risk         {self.reward_risk:.2f}:1"
@@ -141,13 +148,29 @@ def diagnose(trades: Sequence, *, min_trades: int = 20,
     win_rate = len(wins) / count
     net_r = sum(rs) / count
 
-    # Gross: add friction back. Slippage is already inside the prices, so the
-    # per-trade R figures carry it; the charges are separate.
+    # Three levels, matching metrics.py's vocabulary exactly so the two reports cannot
+    # contradict each other:
+    #
+    #   net           after slippage and charges — what actually happened
+    #   gross         after slippage, before charges
+    #   frictionless  before both — the signal's raw edge
+    #
+    # Getting this wrong once already produced a confidently wrong verdict. Slippage is
+    # baked into entry and exit prices, so it is *already inside* `r_multiple`; adding
+    # back only the charges left a book that was +0.30R frictionless reading as "no
+    # dominant cause", which would send someone to redesign a signal that worked.
     risk_total = sum(abs(t.risk_per_share) * abs(t.quantity) for t in trades)
-    friction = sum(t.costs.total for t in trades)
-    friction_r = (friction / (risk_total / count) / count
-                  if risk_total and count else 0.0)
-    gross_r = net_r + friction_r
+    avg_risk = (risk_total / count) if (risk_total and count) else 0.0
+
+    charges = sum(t.costs.total for t in trades)
+    slippage = sum((t.entry_slippage_per_share + t.exit_slippage_per_share)
+                   * abs(t.quantity) for t in trades)
+
+    charges_r = (charges / avg_risk / count) if avg_risk else 0.0
+    slippage_r = (slippage / avg_risk / count) if avg_risk else 0.0
+    gross_r = net_r + charges_r
+    frictionless_r = gross_r + slippage_r
+    friction_r = charges_r + slippage_r
 
     # Excursion, only for trades where an R is meaningful.
     usable = [t for t in trades if t.risk_per_share > 0]
@@ -165,7 +188,9 @@ def diagnose(trades: Sequence, *, min_trades: int = 20,
         trade_count=count, excursion_sample=len(usable),
         actual_win_rate=win_rate, break_even_win_rate=break_even,
         reward_risk=reward_risk, avg_win_r=avg_win, avg_loss_r=avg_loss,
-        net_r=net_r, gross_r=gross_r, never_moved_pct=never_moved,
+        net_r=net_r, gross_r=gross_r, frictionless_r=frictionless_r,
+        slippage_r=slippage_r, charges_r=charges_r,
+        never_moved_pct=never_moved,
         gave_back_count=gave_back, quick_stop_pct=quick_stops,
         median_mfe_r=_median(mfes),
     )
@@ -176,15 +201,20 @@ def diagnose(trades: Sequence, *, min_trades: int = 20,
             detail=f"Profitable at {net_r:+.3f}R per trade — nothing to attribute.",
             **common)
 
-    # Friction first: a book whose gross is positive does not have an entry problem,
-    # however poor its net. The fix is frequency, not signal.
-    if gross_r > 0:
+    # Friction first, and the test is FRICTIONLESS, not gross. A book that makes money
+    # before execution cost does not have a signal problem however poor its net, and the
+    # earlier version — which tested gross and so ignored slippage — misattributed
+    # exactly that case.
+    if frictionless_r > 0:
+        dominant = "slippage" if slippage_r > charges_r else "charges"
         return Attribution(
             fault=Fault.FRICTION,
-            detail=(f"Gross is {gross_r:+.3f}R but net is {net_r:+.3f}R — friction of "
-                    f"{friction_r:.3f}R per trade is eating the edge (hurdle ~{hurdle_r}R). "
-                    f"Trade less often or hold for larger moves; the signal is not the "
-                    f"problem."),
+            detail=(f"Frictionless is {frictionless_r:+.3f}R but net is {net_r:+.3f}R — "
+                    f"execution cost of {friction_r:.3f}R per trade is eating the edge "
+                    f"(hurdle ~{hurdle_r}R), mostly {dominant} "
+                    f"(slippage {slippage_r:.3f}R, charges {charges_r:.3f}R). The signal "
+                    f"is not the problem: trade less often, or hold for larger moves so "
+                    f"the same cost is a smaller fraction of each trade."),
             **common)
 
     if gave_back >= max(1, int(0.3 * len(usable))):
