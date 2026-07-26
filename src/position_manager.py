@@ -30,7 +30,6 @@ from typing import Any, Dict, List, Optional
 import config
 from src import event_bus
 from src import kotak_api
-from src import kotak_api
 from src import market_calendar as cal
 from src.kill_switch import KillSwitch
 
