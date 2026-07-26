@@ -11,7 +11,7 @@
 **Repository:** <https://github.com/VIABLEINDIA/LIGERBOT> ·
 **Market:** NSE equities & indices, intraday only (MIS, flat by session close) ·
 **Broker:** Kotak Neo API v2 ·
-**Scale:** 46 modules / 11,124 lines source · 10,177 lines tests · **1,340 tests, 95% coverage**
+**Scale:** 49 modules / 11,700 lines source · 11,600 lines tests · **1,455 tests, 95% coverage**
 
 ---
 
@@ -145,6 +145,7 @@ that traps you in a position is not a safety feature.
 | `backtest/bar_source.py` | 348 | Bar sources + the data-quality gate. |
 | `backtest/synthetic.py` | 135 | Synthetic data for testing the harness itself. |
 | `backtest/trace.py` | 97 | Deterministic decision log — drives the golden-file test. |
+| `backtest/attribution.py` | 84 | *Which component* is losing: entry, exits, stops or friction. |
 
 ### Infrastructure and safety
 
