@@ -499,6 +499,33 @@ Every halt is loud: log at ERROR, write to the archive, and push an alert.
   a terminal, and JSON is unreadable at a glance. Text still shows the id, appended as
   `<LB-2885-1042>`.
 - Health endpoint per module (last event processed, lag, consumer-group backlog).
+  **Built** — `src/health.py`, on `127.0.0.1:9800+offset`, one fixed port per module.
+
+  The naive version answers *"is the process alive"*, which is worthless here because
+  **alive is the failure mode**. The feed that reconnected forever, the consumer that fell
+  behind until the stream trimmed past it, the socket that died while downstream kept
+  computing on a frozen price — all of those pass a liveness check. That is why they were
+  expensive. So the check rests on two clocks:
+
+  | | meaning | failure? |
+  |---|---|---|
+  | `last_loop_at` | the consume loop turned | **yes** — stale means *wedged*, not busy |
+  | `last_event_at` | work actually happened | **no** — a quiet market is not a fault |
+
+  Conflating them would fire an alert every lunchtime, and an alert people learn to ignore
+  is worse than none.
+
+  **A halted bot returns 200.** The kill switch working is the system working; a 503 would
+  tell an orchestrator to restart the process and destroy the halt. Degraded returns 503 so
+  a monitor does the right thing without parsing the body. `/live` is deliberately weaker —
+  it answers only "the process responds" — and is documented as such so nobody wires up the
+  weak check believing they have the strong one.
+
+  It binds to **loopback by default**: the payload carries positions, P&L and equity, and
+  exposing that on every interface because it was the convenient default is a real
+  disclosure. The server runs on a daemon thread, a port it cannot bind is logged and
+  shrugged off, and a handler that raises returns 500 — a monitoring feature that can take
+  down execution is not worth having.
 - Grafana dashboards: equity curve, open positions, stream lag, order reject rate, feed
   staleness, P&L vs. the backtest's expectation for the same period.
 - Alerts on: halt triggered, feed stale, order rejected, reconciliation mismatch, module

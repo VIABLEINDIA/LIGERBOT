@@ -30,6 +30,7 @@ from typing import Optional
 
 import config
 from src import event_bus
+from src import health as health_mod
 from src import logging_setup
 from src import market_calendar as cal
 from src.bar_store import ParquetBarStore
@@ -171,10 +172,16 @@ class BarBuilder:
         log.info("Bar Builder online: %s bars -> stream %r + %s",
                  config.bar_interval_label(), config.STREAM_MARKET_BARS, self.store.root)
 
+        health, _server = health_mod.serve("bars")
+
         while _running:
             now = cal.now_ist()
             if not self._ensure_session(now.date()):
                 # Non-trading day: idle cheaply rather than spinning on the stream.
+                # The heartbeat still ticks — idle on a holiday is correct behaviour,
+                # and reporting it as wedged would page someone every Sunday.
+                health.set(session="closed")
+                health.loop_tick()
                 time.sleep(5)
                 continue
 
@@ -184,12 +191,17 @@ class BarBuilder:
             )
             for _entry_id, tick in entries:
                 self._handle_tick(tick)
+            if entries:
+                health.event_processed(len(entries))
 
             # Time-driven closure. Without this an instrument that stops trading also
             # stops producing bars, and downstream cannot distinguish quiet from dead.
             if self.aggregator is not None:
                 self._handle_bars(self.aggregator.flush_until(cal.now_ist()))
             self._persist_if_due()
+
+            health.set(session=str(self.session_day), bars_built=self._bars_built)
+            health.loop_tick()
 
         self.shutdown()
 

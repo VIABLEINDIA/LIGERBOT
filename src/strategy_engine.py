@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional  # noqa: F401  (List used by flush(
 
 import config
 from src import event_bus
+from src import health as health_mod
 from src import logging_setup
 from src import market_calendar as cal
 from src.bars import Bar
@@ -241,15 +242,25 @@ class StrategyEngine:
         log.info("Strategy Engine online: %s on %ds bars",
                  self.strategy.describe(), config.STRATEGY_BAR_SECONDS)
 
+        health, _server = health_mod.serve("strategy")
+
         while True:
             for entry_id, fields in self.position_updates.read(count=20, block_ms=10):
                 self.position_updates.handle(entry_id, fields, self._handle_position_update)
 
             for entry_id, fields in self.bars.claim_stale(min_idle_ms=config.CLAIM_IDLE_MS):
                 self.bars.handle(entry_id, fields, self._handle_bar)
+                health.event_processed()
 
             for entry_id, fields in self.bars.read(count=200, block_ms=1000):
                 self.bars.handle(entry_id, fields, self._handle_bar)
+                health.event_processed()
+
+            health.set_backlog(self.bars.check_backlog())
+            health.set(session_day=str(self.session_day),
+                       strategy=self.strategy.describe(),
+                       mirrored_positions=len(self.positions))
+            health.loop_tick()
 
 
 def main() -> None:

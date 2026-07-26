@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional
 
 import config
 from src import event_bus
+from src import health as health_mod
 from src import logging_setup
 from src import kotak_api
 from src import market_calendar as cal
@@ -410,6 +411,8 @@ class PositionManager:
         self.book.start_session(today)
         self.reconcile_now()
 
+        health, _server = health_mod.serve("positions")
+
         while True:
             now = cal.now_ist()
             if now.date() != self.book.session_day:
@@ -422,13 +425,24 @@ class PositionManager:
             for entry_id, fields in self.consumer.claim_stale(
                     min_idle_ms=config.CLAIM_IDLE_MS):
                 self.consumer.handle(entry_id, fields, self._handle_fill)
+                health.event_processed()
 
             for entry_id, fields in self.consumer.read(count=200, block_ms=1000):
                 self.consumer.handle(entry_id, fields, self._handle_fill)
+                health.event_processed()
 
             if time.monotonic() - self._last_reconcile >= config.RECONCILE_INTERVAL_SECONDS:
                 self.reconcile_now()
                 self._last_reconcile = time.monotonic()
+
+            halt = self.kill_switch.state()
+            health.set_halted(halt.halted, halt.reason)
+            health.set_backlog(self.consumer.pending_count())
+            health.set(open_positions=len(self.book.positions),
+                       net_pnl_today=round(self.book.net_pnl_today(), 2),
+                       total_open_risk=round(self.book.total_open_risk(), 2),
+                       trade_count=self.book.trade_count)
+            health.loop_tick()
 
 
 def main() -> None:

@@ -237,6 +237,41 @@ if LOG_FORMAT not in ("text", "json"):
 LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
 
 # --------------------------------------------------------------------------
+# Health endpoints (§3.9)
+# --------------------------------------------------------------------------
+HEALTH_ENABLED: bool = _bool("HEALTH_ENABLED", True)
+
+# Localhost, not 0.0.0.0, and deliberately so. These endpoints report positions, P&L and
+# equity — operational detail about a live trading account. Binding them to every
+# interface because it was the convenient default is a real disclosure; widening this
+# should be a decision someone makes on purpose.
+HEALTH_HOST: str = os.getenv("HEALTH_HOST", "127.0.0.1")
+HEALTH_PORT_BASE: int = _int("HEALTH_PORT_BASE", 9800)
+
+# How long the consume loop may go without turning before the module is judged wedged.
+# Generous relative to the loops themselves (which block for at most ~2s) so that a slow
+# Redis round trip is never mistaken for a hang.
+HEALTH_LOOP_STALE_SECONDS: float = _float("HEALTH_LOOP_STALE_SECONDS", 30.0)
+
+# Fixed offsets so a given module always lands on the same port across restarts and
+# machines — a health check whose address moves is one nobody can wire up.
+HEALTH_PORT_OFFSETS: dict = {
+    "ingestion": 0,
+    "bars": 1,
+    "strategy": 2,
+    "risk": 3,
+    "execution": 4,
+    "positions": 5,
+    "storage": 6,
+    "paper": 7,
+}
+
+
+def health_port(component: str) -> int:
+    """Port for one module's endpoint. Unknown components get the base port."""
+    return HEALTH_PORT_BASE + HEALTH_PORT_OFFSETS.get(component, 0)
+
+# --------------------------------------------------------------------------
 # Archiving (DESIGN.md 3.9, defect B12)
 # --------------------------------------------------------------------------
 # Batched, non-blocking Influx writes. One synchronous write per event cannot keep up with

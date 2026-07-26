@@ -40,6 +40,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import health as health_mod
 from src import logging_setup
 from src import kotak_api
 from src.instruments import InstrumentMaster
@@ -408,21 +409,32 @@ class ExecutionEngine:
             log.error("No instrument master loaded. Live orders cannot resolve trading "
                       "symbols and will be refused (B4).")
 
+        health, _server = health_mod.serve("execution")
+
         while True:
             # Reclaim work a previous instance read but never acked, so a crash
             # mid-send does not strand an order.
             for entry_id, fields in self.consumer.claim_stale(
                     min_idle_ms=config.CLAIM_IDLE_MS):
                 self.consumer.handle(entry_id, fields, self._handle)
+                health.event_processed()
 
             for entry_id, fields in self.consumer.read(count=50, block_ms=1000):
                 self.consumer.handle(entry_id, fields, self._handle)
+                health.event_processed()
 
             self.poll_open_orders()
             self.registry.purge_terminal()
             # Approved orders piling up unacked means trades are going unplaced while
             # every module still looks healthy.
-            self.consumer.check_backlog()
+            health.set_backlog(self.consumer.check_backlog())
+            health.set_halted(self.kill_switch.state().halted,
+                              self.kill_switch.state().reason)
+            health.set(live_orders=len(self.registry.live_orders()),
+                       rejections=self._rejections)
+            # Last, so the heartbeat means "a full iteration completed" rather than
+            # "an iteration started" — the distinction between working and wedged.
+            health.loop_tick()
 
 
 def main() -> None:

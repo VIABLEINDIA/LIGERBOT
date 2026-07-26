@@ -29,6 +29,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import health as health_mod
 from src import logging_setup
 from src import kotak_api
 from src import feed_health
@@ -263,6 +264,8 @@ class RiskManager:
                  limits.max_open_risk * 100, limits.max_daily_drawdown * 100,
                  limits.max_open_positions, limits.allow_short)
 
+        health, _server = health_mod.serve("risk")
+
         while True:
             now = cal.now_ist()
             if now.date() != self.engine.session_day:
@@ -278,11 +281,20 @@ class RiskManager:
             for entry_id, fields in self.signals.claim_stale(
                     min_idle_ms=config.CLAIM_IDLE_MS):
                 self.signals.handle(entry_id, fields, self._handle_signal)
+                health.event_processed()
 
             for entry_id, fields in self.signals.read(count=100, block_ms=1000):
                 self.signals.handle(entry_id, fields, self._handle_signal)
+                health.event_processed()
 
-            self.signals.check_backlog()
+            health.set_backlog(self.signals.check_backlog())
+            halt = self.kill_switch.state()
+            health.set_halted(halt.halted, halt.reason)
+            health.set(session_day=str(self.engine.session_day),
+                       session_equity=round(self.engine.session_equity, 2),
+                       open_risk_pct=round(100.0 * self.engine.total_open_risk_pct(), 3),
+                       realized_pnl_today=round(self.engine.realized_pnl_today, 2))
+            health.loop_tick()
 
 
 def main() -> None:
