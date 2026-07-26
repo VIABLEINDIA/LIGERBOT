@@ -166,6 +166,8 @@ that traps you in a position is not a safety feature.
 | `logging_setup.py` | 179 | Structured logs + correlation-ID threading. |
 | `health.py` | 241 | Per-module health endpoints. |
 | `universe_builder.py` | 268 | Scrip master → tradable universe, with provenance. |
+| `momentum_screen.py` | 170 | Ranks a universe: return ÷ volatility, trend quality (R²), RVOL. |
+| `tv_screener.py` | 158 | Nifty 500 momentum shortlist — the day-one bootstrap. |
 | `bar_store.py` | 205 | Parquet dataset, written from day one. |
 
 ---
