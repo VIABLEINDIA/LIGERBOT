@@ -276,7 +276,7 @@ LIGERBOT/
 │   ├── risk_manager.py       # Module 4 (Redis wrapper; logic moving to risk_engine)
 │   ├── execution_engine.py   # Module 5
 │   └── storage_logger.py     # Module 6
-└── tests/                    # 1102 tests (incl. tests/golden/ — see §3.10)
+└── tests/                    # 1239 tests, 95% coverage (incl. tests/golden/ — §3.10)
 ```
 
 > **On the bundled SMA-crossover strategy:** it is retained as an interface example and as
@@ -290,7 +290,7 @@ Verify the whole foundation layer with no infrastructure at all:
 
 ```bash
 python demo_phase0.py    # calendar, universe, bars, Parquet, equity, risk
-python -m pytest -q      # 1102 tests
+python -m pytest -q      # 1239 tests
 ```
 
 New in Phase 0:
