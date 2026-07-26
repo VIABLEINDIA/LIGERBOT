@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import logging_setup
 from src import market_calendar as cal
 from src.backtest.costs import CostModel, SlippageModel
 from src.backtest.sim_broker import Fill as SimFill
@@ -39,7 +40,7 @@ from src.backtest.sim_broker import FillReason, SimBroker
 from src.bars import Bar
 from src.risk_engine import Intent, OrderRequest, Side
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [paper] %(message)s")
+logging_setup.configure("paper")
 log = logging.getLogger("ligerbot.paper")
 
 

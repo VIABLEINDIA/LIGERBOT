@@ -21,8 +21,9 @@ from typing import Optional
 
 import config
 from src import event_bus
+from src import logging_setup
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [storage] %(message)s")
+logging_setup.configure("storage")
 log = logging.getLogger("ligerbot.storage")
 
 # Every stream we archive, and the InfluxDB measurement each maps to.

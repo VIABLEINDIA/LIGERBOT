@@ -471,7 +471,33 @@ Every halt is loud: log at ERROR, write to the archive, and push an alert.
   drop-oldest on overflow, and never let archiving backpressure the trading path.
 - Retention: full-fidelity ticks for a short window, 1-minute bars retained long-term.
 - Structured JSON logs with a correlation id threaded `signal → order → fill`, so any
-  trade can be reconstructed end to end.
+  trade can be reconstructed end to end. **Built** — `src/logging_setup.py`.
+
+  Five processes touch every trade, so reconstructing *which* signal became *which* order
+  meant reading five logs and matching on timestamps and instrument names. Both collide.
+
+  Threading the id by hand was rejected: it would mean touching every call site and would
+  be forgotten exactly once — in the error path, where it matters. It lives in a
+  `ContextVar` instead, bound by `StreamConsumer.handle()` from the message being handled.
+  That is the one place worth instrumenting, because it is the single boundary every
+  cross-process unit of work passes through, so **every module gets it without a single
+  call site changing**. Falls back to `client_order_id`, then the stream entry id, so an
+  untagged message is still followable.
+
+  Three properties are load-bearing and each has tests:
+
+  - **The id never leaks between messages.** Leaking would be worse than not having it: it
+    would attribute one order's failure to a different order — confidently wrong rather
+    than silent. Restored on exit, including when the handler raises.
+  - **Logging cannot break trading.** A formatter that raises on an unserialisable object
+    would turn a log line into an outage. Every failure path degrades to a plainer line.
+  - **Secrets never reach the log.** Structured logging invites passing rich context, and
+    a broker session is a dict containing a bearer token. Sensitive keys are redacted at
+    the formatter, recursively, so no call site has to remember.
+
+  `LOG_FORMAT` defaults to `text` deliberately — during a live session a human is watching
+  a terminal, and JSON is unreadable at a glance. Text still shows the id, appended as
+  `<LB-2885-1042>`.
 - Health endpoint per module (last event processed, lag, consumer-group backlog).
 - Grafana dashboards: equity curve, open positions, stream lag, order reject rate, feed
   staleness, P&L vs. the backtest's expectation for the same period.

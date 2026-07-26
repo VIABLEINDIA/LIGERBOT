@@ -331,18 +331,29 @@ class StreamConsumer:
         Returns True if handled. A failing message is left unacked so it is retried,
         until it exceeds ``max_deliveries`` — at which point retrying it forever is
         just a slow way of never making progress.
+
+        The message's ``correlation_id`` is bound for the duration of the handler, so
+        every line logged while handling it carries the id without any call site knowing
+        (§3.9). This is the one place worth doing it: it is the single boundary every
+        cross-process unit of work passes through, so binding here threads the id across
+        all five modules for free. Falls back to the entry id, which is at least unique,
+        so a message published without one is still traceable.
         """
-        try:
-            handler(fields)
-        except Exception as exc:  # noqa: BLE001 - handler failures must not kill the loop
-            if self.is_poison(entry_id):
-                self.dead_letter(entry_id, fields, str(exc))
-            else:
-                log.warning("Handler failed for %s:%s (delivery %d) — will retry: %s",
-                            self.stream, entry_id, self.delivery_count(entry_id), exc)
-            return False
-        self.ack(entry_id)
-        return True
+        from src.logging_setup import correlation
+
+        cid = fields.get("correlation_id") or fields.get("client_order_id") or entry_id
+        with correlation(str(cid)):
+            try:
+                handler(fields)
+            except Exception as exc:  # noqa: BLE001 - handler failures must not kill the loop
+                if self.is_poison(entry_id):
+                    self.dead_letter(entry_id, fields, str(exc))
+                else:
+                    log.warning("Handler failed for %s:%s (delivery %d) — will retry: %s",
+                                self.stream, entry_id, self.delivery_count(entry_id), exc)
+                return False
+            self.ack(entry_id)
+            return True
 
 
 class MultiStreamConsumer:

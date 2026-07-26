@@ -225,6 +225,18 @@ ALERT_COOLDOWN_SECONDS: float = _float("ALERT_COOLDOWN_SECONDS", 300.0)
 BACKLOG_ALERT_THRESHOLD: int = _int("BACKLOG_ALERT_THRESHOLD", 1_000)
 
 # --------------------------------------------------------------------------
+# Logging
+# --------------------------------------------------------------------------
+# "text" or "json". Text is the default deliberately: during a live session a human is
+# watching a terminal, and JSON is unreadable at a glance. Switch to json when something
+# downstream is parsing these rather than someone reading them.
+LOG_FORMAT: str = os.getenv("LOG_FORMAT", "text").strip().lower()
+if LOG_FORMAT not in ("text", "json"):
+    raise ValueError(f"LOG_FORMAT must be 'text' or 'json', got {LOG_FORMAT!r}")
+
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+
+# --------------------------------------------------------------------------
 # Archiving (DESIGN.md 3.9, defect B12)
 # --------------------------------------------------------------------------
 # Batched, non-blocking Influx writes. One synchronous write per event cannot keep up with

@@ -25,11 +25,9 @@ import config
 from src import event_bus
 from src import kotak_api
 from src import feed_health
+from src import logging_setup
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [ingestion] %(message)s",
-)
+logging_setup.configure("ingestion")
 log = logging.getLogger("ligerbot.ingestion")
 
 _redis = event_bus.get_client()

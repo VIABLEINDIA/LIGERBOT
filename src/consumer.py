@@ -13,8 +13,9 @@ import logging
 
 import config
 from src import event_bus
+from src import logging_setup
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [consumer] %(message)s")
+logging_setup.configure("consumer")
 log = logging.getLogger("ligerbot.consumer")
 
 

@@ -30,11 +30,12 @@ from typing import Optional
 
 import config
 from src import event_bus
+from src import logging_setup
 from src import market_calendar as cal
 from src.bar_store import ParquetBarStore
 from src.bars import Bar, MultiInstrumentAggregator, VolumeMode
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [bars] %(message)s")
+logging_setup.configure("bars")
 log = logging.getLogger("ligerbot.bar_builder")
 
 _running = True

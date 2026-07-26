@@ -29,12 +29,13 @@ from typing import Any, Dict, List, Optional  # noqa: F401  (List used by flush(
 
 import config
 from src import event_bus
+from src import logging_setup
 from src import market_calendar as cal
 from src.bars import Bar
 from src.risk_engine import Position
 from src.strategy_base import Strategy, StrategyContext, create
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [strategy] %(message)s")
+logging_setup.configure("strategy")
 log = logging.getLogger("ligerbot.strategy")
 
 

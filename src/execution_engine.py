@@ -40,6 +40,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import logging_setup
 from src import kotak_api
 from src.instruments import InstrumentMaster
 from src.kill_switch import KillSwitch
@@ -49,7 +50,7 @@ from src.order_state import (
 )
 from src.risk_engine import Intent, Side
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [execution] %(message)s")
+logging_setup.configure("execution")
 log = logging.getLogger("ligerbot.execution")
 
 

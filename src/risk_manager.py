@@ -29,6 +29,7 @@ from typing import Any, Dict, Optional
 
 import config
 from src import event_bus
+from src import logging_setup
 from src import kotak_api
 from src import feed_health
 from src import market_calendar as cal
@@ -37,7 +38,7 @@ from src.kill_switch import KillSwitch
 from src.order_state import client_order_id
 from src.risk_engine import Intent, RiskEngine, Signal
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [risk] %(message)s")
+logging_setup.configure("risk")
 log = logging.getLogger("ligerbot.risk")
 
 
