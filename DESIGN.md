@@ -1428,3 +1428,53 @@ strategy — which makes a systematic cause more likely than luck.
 even and produced 25%. Either winners must run substantially further or the entry must be
 far more selective. Both are hypotheses for the next dataset, **not** changes to make on the
 strength of four days.
+
+### 5.13 Is the momentum *selection* any good? A cross-sectional study
+
+The intraday autopsy blamed "the entry" — but that bundles two separable decisions:
+**selection** (which stocks are worth watching) and **timing** (when to enter one). If
+selection carries signal and timing does not, the fix is a different intraday trigger on the
+same watchlist. If selection carries none, the momentum premise is wrong on this universe
+and no trigger rescues it. Those are very different projects.
+
+107 liquid NSE names, 300 daily sessions (~14 months) from TradingView. The universe is
+**liquidity-filtered only** — ranking within a momentum-filtered universe would answer "do
+stocks that rose keep rising, given that they rose", which is circular. At each rebalance
+the ranking uses only bars strictly before the entry day.
+
+**The overlapping numbers looked convincing, and were wrong.**
+
+| horizon | rebalances | top excess | spread | t (overlapping) | t (independent) | independent n |
+|---|---|---|---|---|---|---|
+| 5 | 47 | +0.20% | +0.30% | 0.99 | 0.99 | 47 |
+| 10 | 46 | +0.41% | +0.67% | 1.74 | **1.08** | 23 |
+| 20 | 44 | +0.52% | +1.24% | **2.54** | **0.60** | 11 |
+| 40 | 40 | +0.32% | +1.82% | **2.62** | **0.95** | 5 |
+
+With `step=5` and `horizon=40`, consecutive observations share **35 of their 40 sessions**.
+That correlation inflates the t-statistic badly, and the apparent significance at 20 and 40
+sessions was **entirely an artefact of it**. Setting `step=horizon` removes the overlap and
+every statistic collapses below 1.1.
+
+I was one step from reporting "t = 2.54, probably not noise". The robustness check is the
+only reason that did not happen, and it is the same failure §2.5 exists to prevent — an
+inflated statistic from a sample that looks larger than it is.
+
+**Two further things the study says, both awkward.**
+
+*Most of the spread is in the short leg.* At the 40-session horizon the top quintile beat the
+universe by +0.32% while the bottom **underperformed by -1.50%**. The bot is long-only (D3),
+so the spread is not available to it — only the top-quintile excess is, and that is +0.20% to
++0.78% depending on horizon.
+
+*What signal there might be is slow.* The spread grows monotonically with horizon and is
+smallest at 5 sessions. Whatever the ranking is detecting operates over **weeks**. The
+strategy holds for a **median of 75 minutes**. Even granting the selection layer a real edge,
+the holding period is two orders of magnitude shorter than the horizon at which it appears.
+
+**Conclusion, stated at the strength the evidence supports.** Nothing in the available data
+demonstrates an edge in either layer: the selection spread is statistically indistinguishable
+from noise across 5-47 independent observations, and the intraday entry loses 0.169R per
+trade frictionless across 36 trades. **Neither result is strong enough to rule an edge out
+either** — both samples are badly underpowered. That is an argument for more data, not for
+abandoning the project and not for proceeding to capital.
