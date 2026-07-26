@@ -79,6 +79,62 @@ class Strategy(ABC):
         """Bars required before the strategy's output should be trusted."""
         return 0
 
+    # -- interval feasibility ----------------------------------------------
+    def bars_per_session(self, bar_seconds: int) -> int:
+        """How many bars of this size an NSE session contains."""
+        from src import market_calendar as cal
+
+        span = (dt.datetime.combine(dt.date(2000, 1, 1), cal.SESSION_CLOSE)
+                - dt.datetime.combine(dt.date(2000, 1, 1), cal.SESSION_OPEN))
+        return int(span.total_seconds() // max(1, bar_seconds))
+
+    def usable_bars_per_session(self, bar_seconds: int) -> int:
+        """Bars left after warmup, per session. Negative means never."""
+        return self.bars_per_session(bar_seconds) - self.warmup_bars
+
+    def check_interval(self, bar_seconds: int) -> tuple[bool, str]:
+        """Can this strategy trade at all on bars of this size?
+
+        A real defect this exists to prevent, found by a backtest on live data reporting
+        zero trades. **Session-anchored indicators reset in `on_session_start`**, so
+        warmup must fit *inside a single session* — it does not accumulate across days.
+        At 15-minute bars an NSE session holds 25 bars; `trend_pullback` needs 28 and
+        `sma_crossover` needs 50. Both are then **structurally incapable of ever
+        trading**, and nothing said so: the bot runs all day, logs normally, passes every
+        health check, and takes no trades.
+
+        That is the same silent-failure shape as the feed that reconnects forever and the
+        consumer that falls behind — healthy-looking and useless. It gets a check.
+        """
+        available = self.bars_per_session(bar_seconds)
+        needed = self.warmup_bars
+        if needed <= 0:
+            return True, ""
+        if available <= needed:
+            return False, (
+                f"{self.name} needs {needed} bars of warmup but a session holds only "
+                f"{available} at {bar_seconds}s bars, and indicators reset each session "
+                f"— it can NEVER trade at this interval. Use a finer interval "
+                f"(<= {self._max_interval_seconds()}s) or reduce the warmup.")
+        # A strategy that spends most of the day warming up is technically able to trade
+        # and practically crippled, which is worth saying out loud rather than leaving to
+        # be inferred from a thin trade count.
+        if available - needed < available * 0.25:
+            return True, (
+                f"{self.name} spends {needed} of {available} bars warming up at "
+                f"{bar_seconds}s — only {available - needed} usable bars per session.")
+        return True, ""
+
+    def _max_interval_seconds(self) -> int:
+        """Coarsest interval at which warmup still leaves room to trade."""
+        from src import market_calendar as cal
+
+        span = (dt.datetime.combine(dt.date(2000, 1, 1), cal.SESSION_CLOSE)
+                - dt.datetime.combine(dt.date(2000, 1, 1), cal.SESSION_OPEN))
+        if self.warmup_bars <= 0:
+            return int(span.total_seconds())
+        return int(span.total_seconds() // (self.warmup_bars + 1))
+
     def describe(self) -> str:
         items = " ".join(f"{k}={v}" for k, v in sorted(self.params.items()))
         return f"{self.name} v{self.version} [{items}] ({self.params_hash})"

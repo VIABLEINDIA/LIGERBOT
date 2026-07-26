@@ -239,6 +239,17 @@ class StrategyEngine:
         if not event_bus.ping(self.client):
             log.error("Redis not reachable — start it with `docker compose up -d`.")
             return
+        # Refuse rather than run uselessly. A strategy whose warmup exceeds a session
+        # cannot trade at this interval, and would otherwise log normally, pass every
+        # health check, and take no trades all day.
+        feasible, note = self.strategy.check_interval(config.STRATEGY_BAR_SECONDS)
+        if not feasible:
+            log.error("STRATEGY CANNOT TRADE AT THIS BAR INTERVAL — refusing to start.")
+            log.error("  %s", note)
+            return
+        if note:
+            log.warning("%s", note)
+
         log.info("Strategy Engine online: %s on %ds bars",
                  self.strategy.describe(), config.STRATEGY_BAR_SECONDS)
 
