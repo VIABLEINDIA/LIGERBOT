@@ -1383,3 +1383,48 @@ sample size that will happily yield a parameter set with positive expectancy and
 predictive content. That is what §2.5's walk-forward, locked holdout and trial counting
 exist to prevent, and the discipline matters most at the moment the result is
 disappointing. The next input is more data, not more fitting.
+
+#### 5.12.1 Autopsy — *how* it loses
+
+Mechanism, not parameter search. On 36 trades a search would produce a configuration with
+positive expectancy and no predictive content; characterising the failure mode generates
+hypotheses to test on data that does not exist yet.
+
+```
+EXIT REASON        25 signal      avg -0.098R      (69% of trades)
+                    7 stop_loss   avg -1.071R
+                    4 square_off  avg +0.071R
+
+EXCURSION          MFE median +0.29R   p75 +0.84R
+                   42% of trades never reached +0.25R
+                   0 of 36 reached +1.0R and then finished negative
+
+SHAPE              9 winners / 27 losers
+                   avg win +0.707R   avg loss -0.593R   ->  R:R 1.19:1
+                   needs 46% win rate to break even; got 25%
+```
+
+**The exits are not the problem, and the excursion data proves it.** The obvious suspicion
+with a 25% win rate and 69% of exits coming from the strategy's own signal logic is that it
+is cutting trades that would have worked. It is not: **no trade reached +1.0R and then
+finished negative**, and MFE sits at a median of +0.29R. The trailing stop gives nothing
+back because there is nothing to give back.
+
+**The stops are not the problem either.** Seven stop-outs at -1.071R is the stop doing
+exactly what it was sized to do, and no trade was stopped within three bars — so entries
+are not being taken immediately in front of adverse moves.
+
+**The entry is the problem.** Forty-two per cent of positions never move a quarter of an R
+in favour, and the median best-case excursion is +0.29R against a stop a full R away. The
+pullback-in-an-uptrend setup is not being followed by continuation in this sample. That is
+a statement about the *signal*, and it is the one thing the cost model, the risk engine and
+the exit logic cannot compensate for.
+
+**It is broad rather than concentrated.** The worst instrument contributed -1.42R and the
+best +0.78R across 39 names, so this is not one bad symbol dragging an otherwise sound
+strategy — which makes a systematic cause more likely than luck.
+
+**The R:R arithmetic is the summary.** At 1.19:1 the strategy needs a 46% win rate to break
+even and produced 25%. Either winners must run substantially further or the entry must be
+far more selective. Both are hypotheses for the next dataset, **not** changes to make on the
+strength of four days.
