@@ -527,7 +527,34 @@ Every halt is loud: log at ERROR, write to the archive, and push an alert.
   shrugged off, and a handler that raises returns 500 — a monitoring feature that can take
   down execution is not worth having.
 - Grafana dashboards: equity curve, open positions, stream lag, order reject rate, feed
-  staleness, P&L vs. the backtest's expectation for the same period.
+  staleness, P&L vs. the backtest's expectation for the same period. **Partly built** —
+  `grafana/`, provisioned read-only, on loopback.
+
+  Three of the six have Influx data behind them and are built: **P&L and costs**, **open
+  positions and total open risk**, **order flow and reject rate**. Three do not:
+
+  | asked for | why it is not here |
+  |---|---|
+  | stream lag | a property of a *process*, not an event — lives on the health endpoint |
+  | feed staleness | same; and archiving it would mean the archiver reporting on itself |
+  | P&L vs. backtest | reconciliation writes to `state/sessions/`, not Influx |
+
+  The operations dashboard **says so on its face**, with pointers to where each actually
+  lives. That matters more than it sounds: a panel querying data nobody writes renders
+  empty forever, and **an empty panel on a risk dashboard reads as "nothing is wrong"**.
+  An honest gap beats a panel that lies by omission.
+
+  **Building this found a real defect.** `BatchingInfluxWriter` filters against a fixed
+  allow-list and drops anything absent *silently*. Seven of the nine fields in a
+  `position_updates` snapshot were being discarded — including `open_positions` and
+  `total_open_risk`, two of the things listed above. `correlation_id` was dropped too,
+  which would have made the threading built for §3.9 useless in the permanent record.
+  Every one of those panels would have been empty from the day it shipped.
+
+  `tests/test_grafana_dashboards.py` now parses the Flux in every panel and asserts each
+  measurement and field is one the writer actually archives, and — the direction that found
+  the bug — that nothing the position book publishes is dropped. Reverting the field list
+  fails seven tests.
 - Alerts on: halt triggered, feed stale, order rejected, reconciliation mismatch, module
   down, stream backlog growing.
 

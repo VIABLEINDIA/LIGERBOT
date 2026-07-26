@@ -29,6 +29,35 @@ services:
     #   DOCKER_INFLUXDB_INIT_BUCKET: trading_logs
     #   DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: super-secret-dev-token
 
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: ligerbot-grafana
+    restart: unless-stopped
+    depends_on:
+      - influxdb
+    ports:
+      # Loopback only, like the health endpoints and for the same reason: these
+      # dashboards show positions, P&L and open risk for a live trading account.
+      # Publishing them on every interface should be a deliberate act, not a default.
+      - "127.0.0.1:3000:3000"
+    environment:
+      # Read from .env (gitignored). A provisioning file with a real token committed to
+      # the repo is exactly what the CI hygiene job scans for.
+      INFLUX_TOKEN: ${INFLUX_TOKEN:-}
+      INFLUX_ORG: ${INFLUX_ORG:-ligerbot}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-trading_logs}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      # No anonymous access and no sign-up: an unauthenticated dashboard on a machine
+      # that also holds broker credentials is not worth the convenience.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+
 volumes:
   redis_data:
   influxdb_data:
+  grafana_data:

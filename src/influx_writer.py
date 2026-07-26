@@ -32,11 +32,35 @@ import config
 log = logging.getLogger("ligerbot.influx")
 
 # Fields worth storing as numbers, in the order they are looked for.
-NUMERIC_FIELDS = ("ltp", "price", "close", "open", "high", "low", "volume", "vwap",
-                  "quantity", "filled_quantity", "average_fill_price", "net_pnl_today",
-                  "realized_pnl_today", "risk_amount", "costs", "short_ma", "long_ma")
-TEXT_FIELDS = ("status", "order_no", "client_order_id", "broker_order_id",
-               "strategy_name", "reason", "error", "fill_reason", "mode")
+#
+# These lists are an allow-list, and anything absent is discarded silently. That is a
+# reasonable design — it keeps the archive to fields worth charting — but it made the
+# writer a place where data disappeared without a word. Building the Grafana dashboards
+# found seven of the nine fields in a `position_updates` snapshot being dropped, including
+# `open_positions` and `total_open_risk`, both of which §3.9 asks the dashboard to plot.
+# The panels would have been permanently, silently empty.
+#
+# `tests/test_grafana_dashboards.py` now asserts that every field a dashboard queries is
+# actually archived, so the two cannot drift apart again.
+NUMERIC_FIELDS = (
+    # market data
+    "ltp", "price", "close", "open", "high", "low", "volume", "vwap",
+    # orders
+    "quantity", "filled_quantity", "average_fill_price", "risk_amount", "costs",
+    "stop_loss", "take_profit", "ref_price", "slippage", "r_multiple",
+    # the position book's snapshot (§3.2)
+    "net_pnl_today", "realized_pnl_today", "costs_today", "open_positions",
+    "total_open_risk", "gross_exposure", "trade_count",
+    # indicators
+    "short_ma", "long_ma",
+)
+TEXT_FIELDS = (
+    "status", "order_no", "client_order_id", "broker_order_id", "strategy_name",
+    "strategy_version", "reason", "error", "fill_reason", "mode", "order_type",
+    # A field rather than a tag, deliberately: Influx tags are indexed, and one distinct
+    # value per order would explode series cardinality. Filterable, just not indexed.
+    "correlation_id",
+)
 TAG_FIELDS = ("instrument_id", "instrument", "action", "signal", "side", "intent")
 
 

@@ -1,0 +1,20 @@
+# Dashboard provisioning (§3.9).
+#
+# `allowUiUpdates: false` on purpose. Dashboards edited in the browser and never written
+# back are the normal way a provisioned setup drifts from its repository, and the drift is
+# invisible until someone rebuilds the container and the edits vanish. Keeping them
+# read-only forces changes through the JSON, where they are reviewable — and where
+# `tests/test_grafana_dashboards.py` can check the fields they query actually exist.
+apiVersion: 1
+
+providers:
+  - name: ligerbot
+    orgId: 1
+    folder: LIGERBOT
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

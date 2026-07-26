@@ -1,0 +1,116 @@
+{
+  "uid": "ligerbot-operations",
+  "title": "LIGERBOT — Operations",
+  "tags": ["ligerbot"],
+  "timezone": "Asia/Kolkata",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "What this dashboard cannot tell you",
+      "description": "",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Consumer lag, feed staleness and module liveness are NOT here.** They are not in InfluxDB — they live on each module's health endpoint (`127.0.0.1:9800+offset/health`), because they describe a *process*, not an event, and archiving them would mean the archiver reporting on its own health.\n\nPoint a Grafana **Infinity** or JSON datasource at those endpoints, or scrape them with whatever already watches your processes. A panel here querying Influx for them would be permanently empty, which is worse than an honest gap — an empty panel reads as *\"nothing is wrong\"*.\n\n**P&L vs. backtest expectation** is also absent: reconciliation output is written to `state/sessions/`, not to Influx. Run `python -m src.briefing evening`."
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Order flow — signals, approvals, fills",
+      "description": "The three counts should track each other. Signals far above approvals means the risk engine is refusing most of them, which is information: a day where twenty signals became three trades looks identical in P&L to a day with three signals, and diverges from the backtest for a completely different reason.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "signals = from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"trade_signals\" and r._field == \"ref_price\")\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: true)\n  |> set(key: \"_field\", value: \"signals\")\n\napproved = from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"approved_orders\" and r._field == \"quantity\")\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: true)\n  |> set(key: \"_field\", value: \"approved\")\n\nfills = from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"filled_orders\" and r._field == \"filled_quantity\")\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: true)\n  |> set(key: \"_field\", value: \"fills\")\n\nunion(tables: [signals, approved, fills])"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "piechart",
+      "title": "Order outcomes",
+      "description": "One rejection is routine. A run of them is systemic — a wrong symbol, an expired session, a product code the account cannot use — and the strategy keeps signalling into it.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"filled_orders\")\n  |> filter(fn: (r) => r._field == \"status\")\n  |> group(columns: [\"_value\"])\n  |> count()"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Dead-lettered messages",
+      "description": "Work the system gave up on. Any non-zero value needs a human: on approved_orders it means a trade was never placed. Should be zero.",
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"dead_letter\")\n  |> filter(fn: (r) => r._field == \"error\")\n  |> count()"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Tick throughput",
+      "description": "The archive's view of the feed. A drop to zero during market hours means the feed died — but confirm against the module's health endpoint before concluding it, because a flat line here could equally be the archiver falling behind.",
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "cps" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"market_ticks\")\n  |> filter(fn: (r) => r._field == \"ltp\")\n  |> aggregateWindow(every: v.windowPeriod, fn: count, createEmpty: true)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Bars built",
+      "description": "The historical dataset accumulating (D5 mitigation 2). This is the slowest-maturing asset in the project.",
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"market_bars\")\n  |> filter(fn: (r) => r._field == \"close\")\n  |> count()"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Recent rejections and errors",
+      "description": "The reason text, not just the count. During an incident a rejection reason that names the wrong subsystem sends whoever is on the keyboard down the wrong path.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 19 },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"filled_orders\" or r._measurement == \"dead_letter\")\n  |> filter(fn: (r) => r._field == \"error\" or r._field == \"reason\")\n  |> filter(fn: (r) => r._value != \"\")\n  |> sort(columns: [\"_time\"], desc: true)\n  |> limit(n: 50)"
+        }
+      ]
+    }
+  ]
+}

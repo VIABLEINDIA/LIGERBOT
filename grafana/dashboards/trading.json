@@ -1,0 +1,135 @@
+{
+  "uid": "ligerbot-trading",
+  "title": "LIGERBOT — Trading",
+  "tags": ["ligerbot"],
+  "timezone": "Asia/Kolkata",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now/d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Net P&L today (after costs)",
+      "description": "What the drawdown breaker acts on. Realised minus costs — not gross, because a gross figure has been wrong every time it was used to judge a day.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyINR",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"net_pnl_today\")\n  |> last()"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Open positions",
+      "description": "Must be zero outside 09:15-15:10. Anything held past the square-off deadline is a failure of session control, not a trade.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"open_positions\")\n  |> last()"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Trades today",
+      "description": "Read alongside costs. At ~0.12R of friction per round trip, trade count is the main lever on whether costs eat the edge.",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"trade_count\")\n  |> last()"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Costs today",
+      "description": "Brokerage, STT, exchange, GST, SEBI and stamp duty. If this approaches net P&L the day was over-traded regardless of how the P&L looks.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyINR" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"costs_today\")\n  |> last()"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Intraday P&L — realised vs net of costs",
+      "description": "The gap between the two lines IS the cost drag. Plotting only the net figure hides how much of the day's work went to friction.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "currencyINR", "custom": { "fillOpacity": 8 } } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"realized_pnl_today\" or r._field == \"net_pnl_today\")\n  |> aggregateWindow(every: v.windowPeriod, fn: last, createEmpty: false)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Total open risk (rupees at stop)",
+      "description": "The primary risk control (§2.1). This is the sum of distance-to-stop across open positions — the number the 1.5% cap bounds. Counting positions bounds nothing, which is why this is the panel that matters.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "currencyINR", "custom": { "fillOpacity": 15 } } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"total_open_risk\")\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Gross exposure",
+      "description": "Notional across open positions. Bounded separately from risk because MIS leverage means a small risk figure can still carry a large position.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "currencyINR" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"position_updates\")\n  |> filter(fn: (r) => r._field == \"gross_exposure\")\n  |> aggregateWindow(every: v.windowPeriod, fn: max, createEmpty: false)"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Fill prices by instrument",
+      "description": "Every genuine fill. Acceptance is not execution (defect B3), so this plots average_fill_price and nothing else.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "currencyINR" } },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "from(bucket: v.bucket)\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"filled_orders\")\n  |> filter(fn: (r) => r._field == \"average_fill_price\")\n  |> filter(fn: (r) => r._value > 0.0)\n  |> group(columns: [\"instrument_id\"])"
+        }
+      ]
+    }
+  ]
+}

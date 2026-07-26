@@ -1,0 +1,22 @@
+# Grafana datasource provisioning (§3.9).
+#
+# The token is read from the environment, never committed. `.env` is gitignored and
+# docker-compose passes INFLUX_TOKEN through — a provisioning file with a real token in it
+# is a credential in version control, which is exactly what the CI hygiene job scans for.
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB
+    type: influxdb
+    access: proxy
+    uid: ligerbot-influx
+    url: http://influxdb:8086
+    isDefault: true
+    jsonData:
+      version: Flux
+      organization: ${INFLUX_ORG}
+      defaultBucket: ${INFLUX_BUCKET}
+      # Generous relative to the queries, which scan a single trading day at most.
+      timeout: 30
+    secureJsonData:
+      token: ${INFLUX_TOKEN}
